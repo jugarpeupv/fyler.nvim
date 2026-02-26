@@ -181,6 +181,10 @@ function config.defaults()
         columns = {
           git = {
             enabled = true,
+            -- Position of git status indicator:
+            -- "column"     - render in a fixed-width column (default, aligned)
+            -- "after_name" - render right after the filename with a space
+            position = "column",
             symbols = {
               Untracked = "?",
               Added = "A",
@@ -194,6 +198,10 @@ function config.defaults()
           },
           diagnostic = {
             enabled = true,
+            -- Position of diagnostic indicator:
+            -- "column"     - render in a fixed-width column (default, aligned)
+            -- "after_name" - render right after the filename with a space
+            position = "column",
             symbols = {
               Error = "E",
               Warn = "W",

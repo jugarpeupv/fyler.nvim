@@ -58,10 +58,8 @@ Ui.render = vim.schedule_wrap(function(self, component, ...)
   -- Render Ui components to neovim api compatible
   self.renderer:render(component)
 
-  if not opts.partial then
-    -- Clear namespace and sets renderer lines from given Ui component
-    self.win:set_lines(0, -1, self.renderer.line)
-  end
+  -- Clear namespace and sets renderer lines from given Ui component
+  self.win:set_lines(0, -1, self.renderer.line)
 
   for _, highlight in ipairs(self.renderer.highlight) do
     -- stylua: ignore start
@@ -79,6 +77,16 @@ Ui.render = vim.schedule_wrap(function(self, component, ...)
       virt_text         = extmark.virt_text,
       virt_text_pos     = extmark.virt_text_pos,
       virt_text_win_col = extmark.col,
+    })
+    -- stylua: ignore end
+  end
+
+  for _, extmark in ipairs(self.renderer.inline_extmark) do
+    -- stylua: ignore start
+    self.win:set_extmark(extmark.line, extmark.col, {
+      hl_mode       = extmark.hl_mode,
+      virt_text     = extmark.virt_text,
+      virt_text_pos = extmark.virt_text_pos,
     })
     -- stylua: ignore end
   end

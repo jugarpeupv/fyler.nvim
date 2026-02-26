@@ -2,6 +2,7 @@
 ---@field line string[]
 ---@field extmark table[]
 ---@field highlight table[]
+---@field inline_extmark table[]
 ---@field flag table
 local Renderer = {}
 Renderer.__index = Renderer
@@ -11,6 +12,7 @@ function Renderer.new()
     line = {},
     extmark = {},
     highlight = {},
+    inline_extmark = {},
     flag = {
       in_row = false,
       row_base_line = 0, -- Track the starting line of current row
@@ -28,6 +30,7 @@ function Renderer:render(component)
   self.line = {}
   self.extmark = {}
   self.highlight = {}
+  self.inline_extmark = {}
   self.flag = {
     in_row = false,
     row_base_line = 0,
@@ -42,6 +45,8 @@ end
 function Renderer:_render_text(component, current_col)
   local text_value = tostring(component.value or "")
   local highlight = component.option and component.option.highlight
+  local inline_virt_text = component.option and component.option.inline_virt_text
+  local suffix_virt_text = component.option and component.option.suffix_virt_text
   local width = #text_value
 
   if self.flag.in_row then
@@ -58,12 +63,32 @@ function Renderer:_render_text(component, current_col)
       })
     end
 
+    if inline_virt_text then
+      table.insert(self.inline_extmark, {
+        line = self.flag.row_base_line,
+        col = current_col,
+        virt_text = inline_virt_text,
+        virt_text_pos = "inline",
+        hl_mode = "combine",
+      })
+    end
+
     if highlight then
       table.insert(self.highlight, {
         line = self.flag.row_base_line,
         col_start = current_col,
         col_end = current_col + #text_value,
         highlight_group = highlight,
+      })
+    end
+
+    if suffix_virt_text then
+      table.insert(self.inline_extmark, {
+        line = self.flag.row_base_line,
+        col = current_col + #text_value,
+        virt_text = suffix_virt_text,
+        virt_text_pos = "inline",
+        hl_mode = "combine",
       })
     end
 
@@ -84,12 +109,32 @@ function Renderer:_render_text(component, current_col)
       })
     end
 
+    if inline_virt_text then
+      table.insert(self.inline_extmark, {
+        line = current_line_idx,
+        col = 0,
+        virt_text = inline_virt_text,
+        virt_text_pos = "inline",
+        hl_mode = "combine",
+      })
+    end
+
     if highlight then
       table.insert(self.highlight, {
         line = current_line_idx,
         col_start = 0,
         col_end = #text_value,
         highlight_group = highlight,
+      })
+    end
+
+    if suffix_virt_text then
+      table.insert(self.inline_extmark, {
+        line = current_line_idx,
+        col = #text_value,
+        virt_text = suffix_virt_text,
+        virt_text_pos = "inline",
+        hl_mode = "combine",
       })
     end
   end
@@ -144,17 +189,20 @@ function Renderer:_render_column_in_row(component, current_col)
   local column_lines = {}
   local column_highlights = {}
   local column_extmarks = {}
+  local column_inline_extmarks = {}
 
   -- Store current state
   local saved_line = vim.deepcopy(self.line)
   local saved_highlights = vim.deepcopy(self.highlight)
   local saved_extmarks = vim.deepcopy(self.extmark)
+  local saved_inline_extmarks = vim.deepcopy(self.inline_extmark)
   local saved_flag = vim.deepcopy(self.flag)
 
   -- Reset for column rendering
   self.line = {}
   self.highlight = {}
   self.extmark = {}
+  self.inline_extmark = {}
   self.flag.in_row = false
   self.flag.column_offset = column_start_col
 
@@ -167,11 +215,13 @@ function Renderer:_render_column_in_row(component, current_col)
   column_lines = vim.deepcopy(self.line)
   column_highlights = vim.deepcopy(self.highlight)
   column_extmarks = vim.deepcopy(self.extmark)
+  column_inline_extmarks = vim.deepcopy(self.inline_extmark)
 
   -- Restore state
   self.line = saved_line
   self.highlight = saved_highlights
   self.extmark = saved_extmarks
+  self.inline_extmark = saved_inline_extmarks
   self.flag = saved_flag
 
   -- Ensure we have enough lines in the main buffer
@@ -209,6 +259,17 @@ function Renderer:_render_column_in_row(component, current_col)
   -- Apply column extmarks with offset
   for _, extmark in ipairs(column_extmarks) do
     table.insert(self.extmark, {
+      line = self.flag.row_base_line + extmark.line,
+      col = column_start_col + (extmark.col or 0),
+      virt_text = extmark.virt_text,
+      virt_text_pos = extmark.virt_text_pos,
+      hl_mode = extmark.hl_mode,
+    })
+  end
+
+  -- Apply column inline extmarks with offset
+  for _, extmark in ipairs(column_inline_extmarks) do
+    table.insert(self.inline_extmark, {
       line = self.flag.row_base_line + extmark.line,
       col = column_start_col + (extmark.col or 0),
       virt_text = extmark.virt_text,

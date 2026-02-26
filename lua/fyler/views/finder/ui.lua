@@ -111,9 +111,9 @@ local columns = {
     _next({ column = column, highlights = {} })
   end,
 
-  git = function(ctx, _, _next)
+  git = function(ctx, cfg, _next)
     git.map_entries_async(ctx.root_dir, ctx.get_all_paths(), function(entries)
-      local highlights, column = {}, {}
+      local highlights, column, inline = {}, {}, {}
 
       for i, get_entry in ipairs(entries) do
         local entry_data = ctx.get_entry_data(i)
@@ -121,16 +121,24 @@ local columns = {
           local hl = get_entry[2]
           highlights[i] = hl or ((entry_data.type == "directory") and "FylerFSDirectoryName" or nil)
         end
-        table.insert(column, Text(nil, { virt_text = { get_entry } }))
+        if cfg.position == "after_name" then
+          local symbol = get_entry[1]
+          local symbol_hl = get_entry[2]
+          if symbol and symbol ~= "" then
+            inline[i] = { " " .. symbol, symbol_hl }
+          end
+        else
+          table.insert(column, Text(nil, { virt_text = { get_entry } }))
+        end
       end
 
-      _next({ column = column, highlights = highlights })
+      _next({ column = cfg.position ~= "after_name" and column or nil, inline = inline, highlights = highlights })
     end)
   end,
 
-  diagnostic = function(ctx, _, _next)
+  diagnostic = function(ctx, cfg, _next)
     diagnostic.map_entries_async(ctx.root_dir, ctx.get_all_paths(), function(entries)
-      local highlights, column = {}, {}
+      local highlights, column, inline = {}, {}, {}
 
       for i, get_entry in ipairs(entries) do
         local entry_data = ctx.get_entry_data(i)
@@ -138,10 +146,18 @@ local columns = {
           local hl = get_entry[2]
           highlights[i] = hl or ((entry_data.type == "directory") and "FylerFSDirectoryName" or nil)
         end
-        table.insert(column, Text(nil, { virt_text = { get_entry } }))
+        if cfg.position == "after_name" then
+          local symbol = get_entry[1]
+          local symbol_hl = get_entry[2]
+          if symbol and symbol ~= "" then
+            inline[i] = { " " .. symbol, symbol_hl }
+          end
+        else
+          table.insert(column, Text(nil, { virt_text = { get_entry } }))
+        end
       end
 
-      _next({ column = column, highlights = highlights })
+      _next({ column = cfg.position ~= "after_name" and column or nil, inline = inline, highlights = highlights })
     end)
   end,
 
@@ -269,10 +285,28 @@ local function collect_and_render_details(tag, context, files_column, oncollect)
       for index, highlight in pairs(all_highlights) do
         local row = files_column[index]
         if row and row.children then
-          local name_component = row.children[4]
+          local name_component = row.children[3]
           if name_component then
             name_component.option = name_component.option or {}
             name_component.option.highlight = highlight
+          end
+        end
+      end
+
+      -- Append inline icons (position = "after_name") as virtual text after the name component
+      for _, col_name in ipairs(COLUMN_ORDER) do
+        local result = results[col_name]
+        if result and result.inline then
+          for index, virt_entry in pairs(result.inline) do
+            local row = files_column[index]
+            if row and row.children then
+              local name_component = row.children[3]
+              if name_component then
+                name_component.option = name_component.option or {}
+                name_component.option.suffix_virt_text = name_component.option.suffix_virt_text or {}
+                table.insert(name_component.option.suffix_virt_text, virt_entry)
+              end
+            end
           end
         end
       end
@@ -318,13 +352,15 @@ M.files = Component.new_async(function(node, onupdate)
     local icon, hl = icon_and_hl(item)
     local icon_highlight = (item.type == "directory") and "FylerFSDirectoryIcon" or hl
     local name_highlight = (item.type == "directory") and "FylerFSDirectoryName" or nil
-    icon = icon and (icon .. "  ") or ""
 
     local indentation_text = Text(string.rep(" ", 2 * depth))
-    local icon_text = Text(icon, { highlight = icon_highlight })
     local ref_id_text = item.ref_id and Text(string.format("/%05d ", item.ref_id)) or Text("")
-    local name_text = Text(item.name, { highlight = name_highlight })
-    table.insert(files_column, Row({ indentation_text, icon_text, ref_id_text, name_text }))
+    local name_opts = { highlight = name_highlight }
+    if icon then
+      name_opts.inline_virt_text = { { icon .. " ", icon_highlight } }
+    end
+    local name_text = Text(item.name, name_opts)
+    table.insert(files_column, Row({ indentation_text, ref_id_text, name_text }))
   end
 
   onupdate({ tag = "files", children = { Row({ Column(files_column) }) } })

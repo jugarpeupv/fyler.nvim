@@ -3,6 +3,8 @@ local util = require("fyler.lib.util")
 ---@class UiComponentOption
 ---@field highlight string|nil
 ---@field virt_text string[][]|nil
+---@field inline_virt_text string[][]|nil
+---@field suffix_virt_text string[][]|nil
 ---@field col integer|nil
 
 ---@class UiComponent
