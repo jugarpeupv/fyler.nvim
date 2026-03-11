@@ -110,6 +110,7 @@ function Win:set_lines(start, finish, lines)
   self:set_local_buf_option("undolevels", -1)
 
   vim.api.nvim_buf_clear_namespace(self.bufnr, self.namespace, 0, -1)
+  self._extmark_ids = {}
   vim.api.nvim_buf_set_lines(self.bufnr, start, finish, false, lines)
 
   if not was_modifiable then self:set_local_buf_option("modifiable", false) end
@@ -122,7 +123,13 @@ end
 ---@param col integer
 ---@param options vim.api.keyset.set_extmark
 function Win:set_extmark(row, col, options)
-  if self:has_valid_bufnr() then vim.api.nvim_buf_set_extmark(self.bufnr, self.namespace, row, col, options) end
+  if not self:has_valid_bufnr() then return end
+
+  local id = vim.api.nvim_buf_set_extmark(self.bufnr, self.namespace, row, col, options)
+
+  if not self._extmark_ids then self._extmark_ids = {} end
+  if not self._extmark_ids[row] then self._extmark_ids[row] = {} end
+  table.insert(self._extmark_ids[row], id)
 end
 
 function Win:focus()
@@ -329,6 +336,31 @@ function Win:show()
   end
 
   vim.api.nvim_buf_attach(self.bufnr, false, {
+    on_lines = function(_, bufnr, _, firstline, lastline, new_lastline)
+      if not self._extmark_ids then return end
+
+      local old_count = lastline - firstline
+      local new_count = new_lastline - firstline
+
+      if old_count == new_count then return end
+
+      local new_map = {}
+      for line, ids in pairs(self._extmark_ids) do
+        if line >= firstline and line < firstline + old_count and old_count > new_count then
+          -- This line was deleted — remove its extmarks
+          for _, id in ipairs(ids) do
+            pcall(vim.api.nvim_buf_del_extmark, bufnr, self.namespace, id)
+          end
+        elseif line >= firstline + old_count then
+          -- Shift lines that were below the changed range
+          local new_line = line + (new_count - old_count)
+          new_map[new_line] = ids
+        else
+          new_map[line] = ids
+        end
+      end
+      self._extmark_ids = new_map
+    end,
     on_detach = function()
       if self.autocmds or self.user_autocmds then pcall(vim.api.nvim_del_augroup_by_id, self.augroup) end
     end,
