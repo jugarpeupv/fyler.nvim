@@ -7,6 +7,15 @@ local util = require("fyler.lib.util")
 
 local M = {}
 
+-- Global CWD tracking for Fyler (initialized when finder is created)
+local global_cwd = nil
+
+---Internal helper to update global CWD during navigation (for winbar sync)
+---@param path string
+local function update_global_cwd(path)
+  global_cwd = Path.new(path):posix_path()
+end
+
 ---@class Finder
 ---@field uri string
 ---@field files Files
@@ -14,7 +23,10 @@ local M = {}
 local Finder = {}
 Finder.__index = Finder
 
-function Finder.new(uri) return setmetatable({ uri = uri }, Finder) end
+function Finder.new(uri) 
+  local rwd = helper.parse_protocol_uri(uri)
+  return setmetatable({ uri = uri, rwd = rwd }, Finder) 
+end
 
 ---@param name string
 function Finder:action(name)
@@ -129,7 +141,7 @@ function Finder:open(kind)
       return M.navigate(bufname, { force_update = true })
     end,
     right         = view_cfg.win.right,
-    title         = string.format("%s", self:getcwd()),
+    title         = string.format(" %s ", self:getcwd()),
     title_pos     = view_cfg.win.title_pos,
     top           = view_cfg.win.top,
     user_autocmds = {
@@ -147,7 +159,7 @@ function Finder:open(kind)
 end
 
 ---@return string
-function Finder:getrwd() return helper.parse_protocol_uri(self.uri) end
+function Finder:getrwd() return self.rwd end
 
 ---@return string
 function Finder:getcwd() return Path.new(assert(self.files, "files is required").root_path):os_path() end
@@ -181,7 +193,18 @@ function Finder:change_root(path)
     finder = self,
   })
 
-  if self.win then self.win:update_title(string.format(" %s ", path)) end
+  -- Update the finder's URI to match the new path (but don't change buffer name)
+  local normalized_path = Path.new(path):posix_path()
+  self.uri = helper.build_protocol_uri(normalized_path)
+  
+  -- Update the window title
+  if self.win then 
+    self.win:update_title(string.format(" %s ", Path.new(path):os_path())) 
+  end
+  
+  -- Update global CWD for display purposes (winbar, etc.)
+  -- This allows external consumers like winbar to read the current navigation path
+  update_global_cwd(normalized_path)
 
   return self
 end
@@ -282,9 +305,6 @@ end
 -- Single global finder instance
 local current_finder = nil
 
--- Global CWD tracking for Fyler (initialized when finder is created)
-local global_cwd = nil
-
 ---Get the global current working directory for Fyler
 ---@return string
 function M.get_current_dir() 
@@ -332,7 +352,7 @@ function M.set_current_dir(path)
     
     -- Update the window title
     if finder.win and finder.win:has_valid_winid() then
-      local new_title = string.format("%s", Path.new(normalized_path):os_path())
+      local new_title = string.format(" %s ", Path.new(normalized_path):os_path())
       finder.win:update_title(new_title)
     end
   end
