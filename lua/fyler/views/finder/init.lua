@@ -126,7 +126,7 @@ function Finder:open(kind)
         return self:dispatch_refresh({ force_update = true })
       end
 
-      return M.navigate( bufname, { filter = { self.win.bufname }, force_update = true })
+      return M.navigate(bufname, { force_update = true })
     end,
     right         = view_cfg.win.right,
     title         = string.format("%s", self:getcwd()),
@@ -147,7 +147,7 @@ function Finder:open(kind)
 end
 
 ---@return string
-function Finder:getrwd() return util.select_n(2, helper.parse_protocol_uri(self.uri)) end
+function Finder:getrwd() return helper.parse_protocol_uri(self.uri) end
 
 ---@return string
 function Finder:getcwd() return Path.new(assert(self.files, "files is required").root_path):os_path() end
@@ -279,20 +279,85 @@ function Finder:dispatch_mutation()
   end)
 end
 
-local instances = {}
+-- Single global finder instance
+local current_finder = nil
 
----@param uri string|nil
+-- Global CWD tracking for Fyler (initialized when finder is created)
+local global_cwd = nil
+
+---Get the global current working directory for Fyler
+---@return string
+function M.get_current_dir() 
+  return global_cwd or vim.fn.getcwd()
+end
+
+---Set the global current working directory for Fyler and navigate to it
+---@param path string
+function M.set_current_dir(path)
+  -- Normalize and validate the path
+  local normalized_path = Path.new(path):posix_path()
+  assert(Path.new(normalized_path):is_directory(), "Path must be a valid directory")
+  
+  -- If the path hasn't changed, no need to rebuild
+  if global_cwd == normalized_path then return end
+  
+  -- Update global CWD
+  global_cwd = normalized_path
+  
+  -- Get the finder instance
+  local finder = M.instance()
+  
+  -- Recreate the Files instance with the new root path
+  if finder and finder.files then
+    -- Stop and clean all watchers from the old files instance
+    if finder.watcher then
+      finder.watcher:disable(true) -- true = clean up paths
+    end
+    
+    -- Create new Files instance
+    finder.files = require("fyler.views.finder.files").new({
+      open = true,
+      name = Path.new(normalized_path):basename(),
+      path = normalized_path,
+      finder = finder,
+    })
+    
+    -- Update the finder's URI to match the new path
+    finder.uri = helper.build_protocol_uri(normalized_path)
+    
+    -- Update the window buffer name to match new URI
+    if finder.win and finder.win.bufnr and vim.api.nvim_buf_is_valid(finder.win.bufnr) then
+      vim.api.nvim_buf_set_name(finder.win.bufnr, finder.uri)
+    end
+    
+    -- Update the window title
+    if finder.win and finder.win:has_valid_winid() then
+      local new_title = string.format("%s", Path.new(normalized_path):os_path())
+      finder.win:update_title(new_title)
+    end
+  end
+  
+  -- Navigate to the new path with forced update
+  vim.schedule(function()
+    M.navigate(normalized_path, { force_update = true })
+  end)
+end
+
+---Get or create the single global finder instance
 ---@return Finder
-function M.instance(uri)
-  uri = assert(helper.normalize_uri(uri), "Faulty URI")
+function M.instance()
+  if current_finder then return current_finder end
 
-  local finder = instances[uri]
-  if finder then return finder end
+  -- Initialize global_cwd on first instance creation if not already set
+  if not global_cwd then
+    global_cwd = vim.fn.getcwd()
+  end
 
-  local _, path = helper.parse_protocol_uri(uri) --[[@as string]]
-  assert(Path.new(path):is_directory(), "Path is not a valid directory")
+  -- Use global_cwd as the initial path
+  local path = global_cwd
+  local uri = helper.build_protocol_uri(path)
 
-  finder = Finder.new(uri)
+  local finder = Finder.new(uri)
   finder.watcher = require("fyler.views.finder.watcher").new(finder)
   finder.files = require("fyler.views.finder.files").new({
     open = true,
@@ -301,35 +366,25 @@ function M.instance(uri)
     finder = finder,
   })
 
-  instances[uri] = finder
-  return instances[uri]
+  current_finder = finder
+  return current_finder
 end
 
----@param fn fun(uri: string)
-function M.each_finder(fn) util.tbl_each(instances, fn) end
-
----@param uri string|nil
 ---@param kind WinKind|nil
-function M.open(uri, kind) M.instance(uri):open(kind or config.values.views.finder.win.kind) end
-
-local function _select(opts, handler)
-  if opts.filter then
-    util.tbl_each(opts.filter, function(uri)
-      if helper.is_protocol_uri(uri) then handler(uri) end
-    end)
-  else
-    M.each_finder(handler)
-  end
+function M.open(kind) 
+  M.instance():open(kind or config.values.views.finder.win.kind) 
 end
 
-M.close = vim.schedule_wrap(function(opts)
-  _select(opts or {}, function(uri) M.instance(uri):close() end)
+M.close = vim.schedule_wrap(function()
+  local finder = M.instance()
+  if finder and finder:isopen() then
+    finder:close()
+  end
 end)
 
----@param uri string|nil
 ---@param kind WinKind|nil
-M.toggle = vim.schedule_wrap(function(uri, kind)
-  local finder = M.instance(uri)
+M.toggle = vim.schedule_wrap(function(kind)
+  local finder = M.instance()
   if finder:isopen(kind) then
     finder:close()
   else
@@ -337,8 +392,11 @@ M.toggle = vim.schedule_wrap(function(uri, kind)
   end
 end)
 
-M.focus = vim.schedule_wrap(function(opts)
-  _select(opts or {}, function(uri) M.instance(uri).win:focus() end)
+M.focus = vim.schedule_wrap(function()
+  local finder = M.instance()
+  if finder and finder.win then
+    finder.win:focus()
+  end
 end)
 
 -- TODO: Can futher optimize by determining whether `files:navgiate` did any change or not?
@@ -346,38 +404,36 @@ end)
 M.navigate = vim.schedule_wrap(function(path, opts)
   opts = opts or {}
 
-  local set_cursor = vim.schedule_wrap(function(finder, ref_id)
+  local finder = M.instance()
+  
+  if not finder:isopen() then return end
+
+  local set_cursor = vim.schedule_wrap(function(ref_id)
     if finder:isopen() and ref_id then
       vim.api.nvim_win_call(finder.win.winid, function() vim.fn.search(string.format("/%05d ", ref_id)) end)
     end
   end)
 
-  _select(opts, function(uri)
-    local finder = M.instance(uri)
-    if not finder:isopen() then return end
+  local update_table = async.wrap(function(...) finder.files:update(...) end)
+  local navigate_path = async.wrap(function(...) finder:navigate(...) end)
 
-    local update_table = async.wrap(function(...) finder.files:update(...) end)
+  async.void(function()
+    if opts.force_update then update_table() end
 
-    local navigate_path = async.wrap(function(...) finder:navigate(...) end)
+    local ref_id
+    if path then
+      local path = vim.fn.fnamemodify(Path.new(path):posix_path(), ":p")
+      ref_id = util.select_n(2, navigate_path(path))
 
-    async.void(function()
-      if opts.force_update then update_table() end
-
-      local ref_id
-      if path then
-        local path = vim.fn.fnamemodify(Path.new(path):posix_path(), ":p")
-        ref_id = util.select_n(2, navigate_path(path))
-
-        if not ref_id then
-          local link = manager.find_link_path_from_resolved(path)
-          if link then ref_id = util.select_n(2, navigate_path(link)) end
-        end
+      if not ref_id then
+        local link = manager.find_link_path_from_resolved(path)
+        if link then ref_id = util.select_n(2, navigate_path(link)) end
       end
+    end
 
-      opts.onrender = function() set_cursor(finder, ref_id) end
+    opts.onrender = function() set_cursor(ref_id) end
 
-      finder:dispatch_refresh(opts)
-    end)
+    finder:dispatch_refresh(opts)
   end)
 end)
 

@@ -140,6 +140,8 @@ function M.n_goto_parent(self)
   return function()
     local parent_dir = Path.new(self:getcwd()):parent():posix_path()
     if parent_dir == self:getcwd() then return end
+    
+    -- Navigate within the tree (don't change tree root)
     self:change_root(parent_dir):dispatch_refresh({ force_update = true })
   end
 end
@@ -148,6 +150,8 @@ end
 function M.n_goto_cwd(self)
   return function()
     if self:getrwd() == self:getcwd() then return end
+    
+    -- Navigate within the tree (don't change tree root)
     self:change_root(self:getrwd()):dispatch_refresh({ force_update = true })
   end
 end
@@ -162,6 +166,7 @@ function M.n_goto_node(self)
     if not entry then return end
 
     if entry.type == "directory" then
+      -- Navigate within the tree (don't change tree root)
       self:change_root(entry.path):dispatch_refresh({ force_update = true })
     else
       self:action_call("n_select")
@@ -199,6 +204,51 @@ function M.n_collapse_node(self)
         if self:isopen() then vim.fn.search(string.format("/%05d", focus_ref_id)) end
       end,
     })
+  end
+end
+
+---@param self Finder
+function M.n_set_cwd_to_parent(self)
+  return function()
+    local parent_dir = Path.new(self:getcwd()):parent():posix_path()
+    if parent_dir == self:getcwd() then return end
+    
+    local finder_module = require("fyler.views.finder")
+    finder_module.set_current_dir(parent_dir)
+  end
+end
+
+---@param self Finder
+function M.n_set_cwd_here(self)
+  return function()
+    local finder_module = require("fyler.views.finder")
+    local current_cwd = finder_module.get_current_dir()
+    
+    if current_cwd == self:getcwd() then return end
+    
+    finder_module.set_current_dir(self:getcwd())
+  end
+end
+
+---@param self Finder
+function M.n_set_cwd_to_node(self)
+  return function()
+    local ref_id = helper.parse_ref_id(vim.api.nvim_get_current_line())
+    if not ref_id then return end
+
+    local entry = self.files:node_entry(ref_id)
+    if not entry then return end
+
+    local target_path
+    if entry.type == "directory" then
+      target_path = entry.path
+    else
+      -- For files, use the parent directory
+      target_path = Path.new(entry.path):parent():posix_path()
+    end
+    
+    local finder_module = require("fyler.views.finder")
+    finder_module.set_current_dir(target_path)
   end
 end
 

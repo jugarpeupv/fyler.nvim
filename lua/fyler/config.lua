@@ -57,6 +57,9 @@ local DEPRECATION_RULES = {
 ---| "SelectVSplit"
 ---| "CollapseAll"
 ---| "CollapseNode"
+---| "SetCwdHere"
+---| "SetCwdToParent"
+---| "SetCwdToNode"
 
 ---@class FylerConfigIndentScope
 ---@field enabled boolean

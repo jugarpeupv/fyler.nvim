@@ -72,7 +72,11 @@ function M.setup(opts)
   -- Fyler.API: Opens finder view with provided options
   M.open = function(args)
     args = args or {}
-    finder.open(args.dir, args.kind)
+    -- If dir is provided, set it as current dir first
+    if args.dir then
+      finder.set_current_dir(args.dir)
+    end
+    finder.open(args.kind)
   end
 
   -- Fyler.API: Closes current finder view
@@ -81,7 +85,11 @@ function M.setup(opts)
   -- Fyler.API: Toggles finder view with provided options
   M.toggle = function(args)
     args = args or {}
-    finder.toggle(args.dir, args.kind)
+    -- If dir is provided, set it as current dir first
+    if args.dir then
+      finder.set_current_dir(args.dir)
+    end
+    finder.toggle(args.kind)
   end
 
   -- Fyler.API: Focus finder view
@@ -89,6 +97,12 @@ function M.setup(opts)
 
   -- Fyler.API: Focuses given file path
   M.navigate = function(path) finder.navigate(path) end
+
+  -- Fyler.API: Set global current working directory
+  M.set_current_dir = finder.set_current_dir
+
+  -- Fyler.API: Get global current working directory
+  M.get_current_dir = finder.get_current_dir
 end
 
 return M
