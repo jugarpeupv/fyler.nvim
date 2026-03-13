@@ -270,7 +270,7 @@ local function can_skip_confirmation(operations)
 
   util.tbl_each(operations, function(o) count[o.type] = (count[o.type] or 0) + 1 end)
 
-  return count.create <= 5 and count.move <= 1 and count.copy <= 1 and count.delete <= 0
+  return count.create <= 5 and count.move <= 1 and count.copy <= 1 and count.delete <= 1
 end
 
 local get_confirmation = async.wrap(vim.schedule_wrap(function(...) require("fyler.input").confirm.open(...) end))
