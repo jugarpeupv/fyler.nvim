@@ -13,7 +13,9 @@ local global_cwd = nil
 ---Internal helper to update global CWD during navigation (for winbar sync)
 ---@param path string
 local function update_global_cwd(path)
-  global_cwd = Path.new(path):posix_path()
+  local p = Path.new(path):posix_path()
+  -- Always expand to absolute path so relative paths like "." are resolved
+  global_cwd = vim.fn.fnamemodify(p, ":p"):gsub("/$", "")
 end
 
 ---@class Finder
@@ -194,7 +196,7 @@ function Finder:change_root(path)
   })
 
   -- Update the finder's URI to match the new path (but don't change buffer name)
-  local normalized_path = Path.new(path):posix_path()
+  local normalized_path = vim.fn.fnamemodify(Path.new(path):posix_path(), ":p"):gsub("/$", "")
   self.uri = helper.build_protocol_uri(normalized_path)
   
   -- Update the window title
@@ -314,8 +316,8 @@ end
 ---Set the global current working directory for Fyler and navigate to it
 ---@param path string
 function M.set_current_dir(path)
-  -- Normalize and validate the path
-  local normalized_path = Path.new(path):posix_path()
+  -- Normalize and validate the path (expand relative paths like "." to absolute)
+  local normalized_path = vim.fn.fnamemodify(Path.new(path):posix_path(), ":p"):gsub("/$", "")
   assert(Path.new(normalized_path):is_directory(), "Path must be a valid directory")
   
   -- If the path hasn't changed, no need to rebuild
@@ -370,7 +372,7 @@ function M.instance()
 
   -- Initialize global_cwd on first instance creation if not already set
   if not global_cwd then
-    global_cwd = vim.fn.getcwd()
+    global_cwd = vim.fn.fnamemodify(vim.fn.getcwd(), ":p"):gsub("/$", "")
   end
 
   -- Use global_cwd as the initial path
