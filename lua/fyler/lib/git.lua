@@ -5,53 +5,113 @@ local util = require("fyler.lib.util")
 
 local M = {}
 
-local icon_map = {
-  ["??"] = "Untracked",
-  ["A "] = "Added",
-  ["AM"] = "Added",
-  [" M"] = "Modified",
-  ["MM"] = "Modified",
-  ["M "] = "Modified",
-  [" D"] = "Deleted",
-  ["D "] = "Deleted",
-  ["MD"] = "Deleted",
-  ["AD"] = "Deleted",
-  ["R "] = "Renamed",
-  ["RM"] = "Renamed",
-  ["RD"] = "Renamed",
-  ["C "] = "Copied",
-  ["CM"] = "Copied",
-  ["CD"] = "Copied",
-  ["DD"] = "Conflict",
-  ["AU"] = "Conflict",
-  ["UD"] = "Conflict",
-  ["UA"] = "Conflict",
-  ["DU"] = "Conflict",
-  ["AA"] = "Conflict",
-  ["UU"] = "Conflict",
-  ["!!"] = "Ignored",
+---Find the actual git directory for any path.
+---Handles regular repos (.git/ directory) and git worktrees (.git file containing
+---"gitdir: <path>"). Returns nil when not inside a git repository.
+---@param dir string
+---@return string|nil
+function M.find_git_dir(dir)
+  local path = Path.new(dir)
+  while true do
+    local candidate = path:join(".git")
+
+    if candidate:is_directory() then
+      return candidate:os_path()
+    end
+
+    if candidate:is_file() then
+      -- Worktree: .git is a file with "gitdir: <relative-or-absolute-path>"
+      local f = io.open(candidate:os_path(), "r")
+      if f then
+        local line = f:read("*l")
+        f:close()
+        if line then
+          local target = line:match("^gitdir:%s*(.+)$")
+          if target then
+            target = target:match("^%s*(.-)%s*$") -- trim
+            -- Resolve relative paths against the directory that contains the .git file
+            if not vim.startswith(target, "/") then
+              target = path:join(target):os_path()
+            end
+            return target
+          end
+        end
+      end
+    end
+
+    local parent = path:parent()
+    -- Stop when we reach the filesystem root
+    if parent:os_path() == path:os_path() then return nil end
+    path = parent
+  end
+end
+
+-- Unmerged / conflict codes where X and Y together have a single meaning
+local conflict_codes = {
+  DD = true, AU = true, UD = true, UA = true,
+  DU = true, AA = true, UU = true,
 }
+
+---Decode a raw two-character porcelain XY code into a human-readable status
+---name, taking staged vs. unstaged state into account.
+---
+--- Priority (highest to lowest):
+---   1. Conflict   – unmerged states where both chars form a single meaning
+---   2. Untracked  – "??"
+---   3. Ignored    – "!!"
+---   4. Named staged status – when X encodes Add / Delete / Rename / Copy
+---   5. Staged     – any other non-blank / non-? X character (e.g. "M ")
+---   6. Named unstaged status derived from Y
+---   7. Unstaged   – any other non-blank Y character
+---
+---When a file has BOTH staged and unstaged changes (e.g. "MM"), staged wins.
+---@param xy string Two-character porcelain code, e.g. " M", "M ", "MM", "A "
+---@return string|nil status Human-readable status name, or nil for unknown codes
+local function decode_xy(xy)
+  if xy == nil then return nil end
+  if conflict_codes[xy] then return "Conflict" end
+  if xy == "??" then return "Untracked" end
+  if xy == "!!" then return "Ignored" end
+
+  local x = xy:sub(1, 1)
+  local y = xy:sub(2, 2)
+
+  -- Staged side takes priority
+  if x == "A" then return "Added" end
+  if x == "D" then return "Deleted" end
+  if x == "R" then return "Renamed" end
+  if x == "C" then return "Copied" end
+  if x ~= " " and x ~= "?" then return "Staged" end
+
+  -- Unstaged side
+  if y == "D" then return "Deleted" end
+  if y ~= " " and y ~= "?" then return "Unstaged" end
+
+  return nil
+end
 
 local hl_map = {
   Untracked = "FylerGitUntracked",
-  Added = "FylerGitAdded",
-  Modified = "FylerGitModified",
-  Deleted = "FylerGitDeleted",
-  Renamed = "FylerGitRenamed",
-  Copied = "FylerGitCopied",
-  Conflict = "FylerGitConflict",
-  Ignored = "FylerGitIgnored",
+  Added     = "FylerGitAdded",
+  Staged    = "FylerGitStaged",
+  Unstaged  = "FylerGitUnstaged",
+  Deleted   = "FylerGitDeleted",
+  Renamed   = "FylerGitRenamed",
+  Copied    = "FylerGitCopied",
+  Conflict  = "FylerGitConflict",
+  Ignored   = "FylerGitIgnored",
 }
 
 local icon_hl_map = {
   Untracked = "FylerGitIconUntracked",
-  Added = "FylerGitIconAdded",
-  Modified = "FylerGitIconModified",
-  Deleted = "FylerGitIconDeleted",
-  Renamed = "FylerGitIconRenamed",
-  Copied = "FylerGitIconCopied",
-  Conflict = "FylerGitIconConflict",
-  Ignored = "FylerGitIconIgnored",
+  Added     = "FylerGitIconAdded",
+  Staged    = "FylerGitIconStaged",
+  Unstaged  = "FylerGitIconUnstaged",
+  Deleted   = "FylerGitIconDeleted",
+  Renamed   = "FylerGitIconRenamed",
+  Copied    = "FylerGitIconCopied",
+  Conflict  = "FylerGitIconConflict",
+  Ignored   = "FylerGitIconIgnored",
 }
 
 function M.map_entries_async(root_dir, entries, _next)
@@ -74,10 +134,11 @@ function M.map_entries_async(root_dir, entries, _next)
               end
             end
           end
+          local status_name = decode_xy(status)
           return {
-            config.values.views.finder.columns.git.symbols[icon_map[status]] or "",
-            icon_hl_map[icon_map[status]],
-            hl_map[icon_map[status]],
+            config.values.views.finder.columns.git.symbols[status_name] or "",
+            icon_hl_map[status_name],
+            hl_map[status_name],
           }
         end
       )

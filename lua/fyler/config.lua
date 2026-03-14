@@ -187,12 +187,13 @@ function config.defaults()
             symbols = {
               Untracked = "?",
               Added = "A",
-              Modified = "M",
+              Staged = "+",
+              Unstaged = "~",
               Deleted = "D",
               Renamed = "R",
               Copied = "C",
               Conflict = "!",
-              Ignored = " ",
+              Ignored = "",
             },
           },
           diagnostic = {

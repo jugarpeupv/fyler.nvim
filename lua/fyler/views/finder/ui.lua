@@ -247,7 +247,7 @@ local function collect_and_render_details(tag, context, files_column, oncollect)
     end
   end
 
-  if total == 0 then return end
+  if total == 0 then return nil end
 
   local function on_column_complete(column_name, column_data)
     if M.tag ~= tag then return end
@@ -281,13 +281,24 @@ local function collect_and_render_details(tag, context, files_column, oncollect)
       for _, col_name in ipairs(COLUMN_ORDER) do
         local result = results[col_name]
         if result and result.column then
-          if #detail_columns > 0 then table.insert(detail_columns, Text("  ")) end
+          -- Prepend two spaces to the first virt_text chunk of each entry so
+          -- that the gap between the file-name column and the detail column is
+          -- rendered as virtual text (zero real bytes written to the buffer).
+          -- Using a real Text("  ") or a spacer Column writes actual space
+          -- characters that become visible listchars trail dots.
+          if #detail_columns > 0 then
+            for _, entry in ipairs(result.column) do
+              if entry.option and entry.option.virt_text and entry.option.virt_text[1] then
+                entry.option.virt_text[1][1] = "  " .. (entry.option.virt_text[1][1] or "")
+              end
+            end
+          end
 
           table.insert(detail_columns, Column(result.column))
         end
       end
 
-      oncollect({ tag = "files", children = { Row(detail_columns) } }, { partial = true })
+      oncollect({ tag = "files", children = { Row(detail_columns) } })
     end
   end
 
@@ -301,6 +312,8 @@ local function collect_and_render_details(tag, context, files_column, oncollect)
       if not success then on_column_complete(column_name, nil) end
     end
   end
+
+  return true
 end
 
 M.files = Component.new_async(function(node, onupdate)
@@ -327,14 +340,21 @@ M.files = Component.new_async(function(node, onupdate)
     table.insert(files_column, Row({ indentation_text, icon_text, ref_id_text, name_text }))
   end
 
-  onupdate({ tag = "files", children = { Row({ Column(files_column) }) } })
-
-  collect_and_render_details(
+  -- Attempt a single-pass render: wait for all detail columns before the first
+  -- buffer write so the file list and its decorations (git, diagnostic, …) appear
+  -- together. Falls back to the immediate write if no columns are enabled.
+  local collected = collect_and_render_details(
     current_tag,
     create_column_context(current_tag, node, flattened_entries, files_column),
     files_column,
     onupdate
   )
+
+  -- collect_and_render_details returns nil when no columns are enabled; in that
+  -- case do the immediate write so the buffer is never left blank.
+  if not collected then
+    onupdate({ tag = "files", children = { Row({ Column(files_column) }) } })
+  end
 end)
 
 M.operations = Component.new(function(operations)
