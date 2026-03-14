@@ -49,11 +49,12 @@ function Renderer:_render_text(component, current_col)
 
     if component.option and component.option.virt_text then
       width = #component.option.virt_text[1][1]
+      local pos = component.option.virt_text_pos or "overlay"
       table.insert(self.extmark, {
         line = self.flag.row_base_line,
         col = current_col,
         virt_text = component.option.virt_text,
-        virt_text_pos = "overlay",
+        virt_text_pos = pos,
         hl_mode = "combine",
       })
     end
@@ -79,7 +80,7 @@ function Renderer:_render_text(component, current_col)
         line = current_line_idx,
         col = component.option.col or 0,
         virt_text = component.option.virt_text,
-        virt_text_pos = "overlay",
+        virt_text_pos = component.option.virt_text_pos or "overlay",
         hl_mode = "combine",
       })
     end

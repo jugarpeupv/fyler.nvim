@@ -78,7 +78,7 @@ Ui.render = vim.schedule_wrap(function(self, component, ...)
       hl_mode           = extmark.hl_mode,
       virt_text         = extmark.virt_text,
       virt_text_pos     = extmark.virt_text_pos,
-      virt_text_win_col = extmark.col,
+      virt_text_win_col = extmark.virt_text_pos ~= "eol" and extmark.col or nil,
     })
     -- stylua: ignore end
   end

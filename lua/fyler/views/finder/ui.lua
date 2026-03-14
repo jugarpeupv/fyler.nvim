@@ -102,7 +102,11 @@ local columns = {
     for i = 1, #ctx.entries do
       local entry_data = ctx.get_entry_data(i)
       if entry_data and entry_data.item.link then
-        table.insert(column, Text(nil, { virt_text = { { " --> " .. entry_data.path, "FylerFSLink" } } }))
+        -- Read the raw symlink target (as stored, before any resolution).
+        -- This gives a concise display like "dotfiles/foo/bar" rather than
+        -- a full absolute resolved path.
+        local target = vim.uv.fs_readlink(entry_data.item.link) or entry_data.path
+        table.insert(column, Text(nil, { virt_text = { { " -> " .. target, "FylerFSLink" } }, virt_text_pos = "eol" }))
       else
         table.insert(column, Text(nil, { virt_text = { { "" } } }))
       end
@@ -121,7 +125,7 @@ local columns = {
           local name_hl = get_entry[3]
           highlights[i] = name_hl or ((entry_data.type == "directory") and "FylerFSDirectoryName" or nil)
         end
-        table.insert(column, Text(nil, { virt_text = { { get_entry[1], get_entry[2] } } }))
+        table.insert(column, Text(nil, { virt_text = { { get_entry[1], get_entry[2] } }, virt_text_pos = "eol" }))
       end
 
       _next({ column = column, highlights = highlights })
@@ -138,7 +142,7 @@ local columns = {
           local hl = get_entry[2]
           highlights[i] = hl or ((entry_data.type == "directory") and "FylerFSDirectoryName" or nil)
         end
-        table.insert(column, Text(nil, { virt_text = { get_entry } }))
+        table.insert(column, Text(nil, { virt_text = { get_entry }, virt_text_pos = "eol" }))
       end
 
       _next({ column = column, highlights = highlights })
@@ -182,7 +186,7 @@ local columns = {
       local entry_data = ctx.get_entry_data(i)
       if entry_data then
         local perms = get_permissions(entry_data.item.link or entry_data.path)
-        table.insert(column, Text(nil, { virt_text = { { perms, "Comment" } } }))
+        table.insert(column, Text(nil, { virt_text = { { perms, "Comment" } }, virt_text_pos = "eol" }))
       else
         table.insert(column, Text(nil, { virt_text = { { "" } } }))
       end
@@ -228,7 +232,7 @@ local columns = {
     for i = 1, #ctx.entries do
       table.insert(
         column,
-        Text(nil, { virt_text = { { format_size(get_size(ctx.get_entry_data(i).path)), "Comment" } } })
+        Text(nil, { virt_text = { { format_size(get_size(ctx.get_entry_data(i).path)), "Comment" } }, virt_text_pos = "eol" })
       )
     end
 
@@ -289,7 +293,10 @@ local function collect_and_render_details(tag, context, files_column, oncollect)
           if #detail_columns > 0 then
             for _, entry in ipairs(result.column) do
               if entry.option and entry.option.virt_text and entry.option.virt_text[1] then
-                entry.option.virt_text[1][1] = "  " .. (entry.option.virt_text[1][1] or "")
+                local text = entry.option.virt_text[1][1] or ""
+                if text ~= "" then
+                  entry.option.virt_text[1][1] = "  " .. text
+                end
               end
             end
           end
