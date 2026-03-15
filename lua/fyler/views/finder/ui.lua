@@ -251,7 +251,7 @@ local function collect_and_render_details(tag, context, files_column, oncollect)
     end
   end
 
-  if total == 0 then return nil end
+  if total == 0 then return end
 
   local function on_column_complete(column_name, column_data)
     if M.tag ~= tag then return end
@@ -305,7 +305,7 @@ local function collect_and_render_details(tag, context, files_column, oncollect)
         end
       end
 
-      oncollect({ tag = "files", children = { Row(detail_columns) } })
+      oncollect({ tag = "files", children = { Row(detail_columns) } }, { partial = true })
     end
   end
 
@@ -319,8 +319,6 @@ local function collect_and_render_details(tag, context, files_column, oncollect)
       if not success then on_column_complete(column_name, nil) end
     end
   end
-
-  return true
 end
 
 M.files = Component.new_async(function(node, onupdate)
@@ -347,21 +345,18 @@ M.files = Component.new_async(function(node, onupdate)
     table.insert(files_column, Row({ indentation_text, icon_text, ref_id_text, name_text }))
   end
 
-  -- Attempt a single-pass render: wait for all detail columns before the first
-  -- buffer write so the file list and its decorations (git, diagnostic, …) appear
-  -- together. Falls back to the immediate write if no columns are enabled.
-  local collected = collect_and_render_details(
+  -- First pass: render the file tree immediately so the buffer is populated
+  -- without waiting for async detail columns (git status, symlink targets, …).
+  onupdate({ tag = "files", children = { Row({ Column(files_column) }) } })
+
+  -- Second pass: fire detail columns in parallel. When all complete, a partial
+  -- re-render overlays the virtual-text decorations without rewriting buffer lines.
+  collect_and_render_details(
     current_tag,
     create_column_context(current_tag, node, flattened_entries, files_column),
     files_column,
     onupdate
   )
-
-  -- collect_and_render_details returns nil when no columns are enabled; in that
-  -- case do the immediate write so the buffer is never left blank.
-  if not collected then
-    onupdate({ tag = "files", children = { Row({ Column(files_column) }) } })
-  end
 end)
 
 M.operations = Component.new(function(operations)

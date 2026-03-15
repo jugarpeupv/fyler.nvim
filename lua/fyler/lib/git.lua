@@ -77,7 +77,6 @@ local function decode_xy(xy)
   local y = xy:sub(2, 2)
 
   -- Staged side takes priority
-  if x == "A" then return "Added" end
   if x == "D" then return "Deleted" end
   if x == "R" then return "Renamed" end
   if x == "C" then return "Copied" end
@@ -92,7 +91,6 @@ end
 
 local hl_map = {
   Untracked = "FylerGitUntracked",
-  Added     = "FylerGitAdded",
   Staged    = "FylerGitStaged",
   Unstaged  = "FylerGitUnstaged",
   Deleted   = "FylerGitDeleted",
@@ -104,7 +102,6 @@ local hl_map = {
 
 local icon_hl_map = {
   Untracked = "FylerGitIconUntracked",
-  Added     = "FylerGitIconAdded",
   Staged    = "FylerGitIconStaged",
   Unstaged  = "FylerGitIconUnstaged",
   Deleted   = "FylerGitIconDeleted",

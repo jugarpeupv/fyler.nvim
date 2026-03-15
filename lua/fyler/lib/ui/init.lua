@@ -59,8 +59,11 @@ Ui.render = vim.schedule_wrap(function(self, component, ...)
   self.renderer:render(component)
 
   if not opts.partial then
-    -- Clear namespace and sets renderer lines from given Ui component
+    -- Full render: replace buffer lines (also clears namespace via set_lines)
     self.win:set_lines(0, -1, self.renderer.line)
+  else
+    -- Partial render: keep buffer lines, only refresh extmarks
+    self.win:clear_extmarks()
   end
 
   for _, highlight in ipairs(self.renderer.highlight) do

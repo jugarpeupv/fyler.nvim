@@ -186,7 +186,6 @@ function config.defaults()
             enabled = true,
             symbols = {
               Untracked = "?",
-              Added = "A",
               Staged = "+",
               Unstaged = "~",
               Deleted = "D",

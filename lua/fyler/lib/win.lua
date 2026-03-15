@@ -119,6 +119,12 @@ function Win:set_lines(start, finish, lines)
   self:set_local_buf_option("undolevels", undolevels)
 end
 
+function Win:clear_extmarks()
+  if not self:has_valid_bufnr() then return end
+  vim.api.nvim_buf_clear_namespace(self.bufnr, self.namespace, 0, -1)
+  self._extmark_ids = {}
+end
+
 ---@param row integer
 ---@param col integer
 ---@param options vim.api.keyset.set_extmark
