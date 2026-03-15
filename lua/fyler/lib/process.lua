@@ -52,7 +52,30 @@ function Process:spawn_async(on_exit)
     },
   }
 
-  self.handle, self.pid = vim.uv.spawn(self.path, options, on_exit)
+  -- Delay calling on_exit until stdout is fully drained.  The libuv process
+  -- exit callback fires as soon as the process dies, but the read_start
+  -- callbacks for stdout/stderr may still have buffered chunks queued.
+  -- Calling on_exit before those chunks are delivered means stdout_iter()
+  -- sees an incomplete (or empty) buffer.
+  --
+  -- Strategy: latch the exit code when the process exits, then fire on_exit
+  -- from the stdout EOF handler (data == nil) once all data has been read.
+  local exit_code = nil
+  local stdout_done = false
+
+  local function maybe_finish()
+    if exit_code ~= nil and stdout_done then
+      -- Schedule on the main loop: libuv callbacks (spawn exit and read_start)
+      -- run in a fast-event context where vim.api.* calls are forbidden.
+      -- vim.schedule ensures on_exit (and everything it calls) runs safely.
+      vim.schedule(function() on_exit(exit_code) end)
+    end
+  end
+
+  self.handle, self.pid = vim.uv.spawn(self.path, options, function(code)
+    exit_code = code
+    maybe_finish()
+  end)
 
   vim.uv.write(options.stdio[1], self.stdin or "", function() vim.uv.close(options.stdio[1]) end)
 
@@ -63,6 +86,8 @@ function Process:spawn_async(on_exit)
     else
       vim.uv.read_stop(options.stdio[2])
       vim.uv.close(options.stdio[2])
+      stdout_done = true
+      maybe_finish()
     end
   end)
 

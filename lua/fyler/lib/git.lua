@@ -46,6 +46,32 @@ function M.find_git_dir(dir)
   end
 end
 
+---Find the common git directory for a worktree.
+---In a regular repo, git_dir IS the common dir.
+---In a worktree, git_dir contains a "commondir" file pointing to the shared repo.
+---Returns git_dir itself when no commondir file is present (regular repo / main worktree).
+---@param git_dir string  The worktree-specific git dir (result of find_git_dir)
+---@return string  The common git dir (where refs/heads lives)
+function M.find_common_git_dir(git_dir)
+  local commondir_file = git_dir .. "/commondir"
+  local f = io.open(commondir_file, "r")
+  if not f then return git_dir end
+
+  local line = f:read("*l")
+  f:close()
+  if not line then return git_dir end
+
+  line = line:match("^%s*(.-)%s*$") -- trim
+  if line == "" then return git_dir end
+
+  -- commondir can be an absolute path or relative to git_dir
+  if vim.startswith(line, "/") then
+    return line
+  else
+    return Path.new(git_dir):join(line):os_path()
+  end
+end
+
 -- Unmerged / conflict codes where X and Y together have a single meaning
 local conflict_codes = {
   DD = true, AU = true, UD = true, UA = true,

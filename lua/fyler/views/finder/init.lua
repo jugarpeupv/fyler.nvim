@@ -211,9 +211,22 @@ function Finder:change_root(path)
   return self
 end
 
----@param opts { force_update: boolean, onrender: function }|nil
+---@param opts { force_update: boolean, git_only: boolean, onrender: function }|nil
 function Finder:dispatch_refresh(opts)
   opts = opts or {}
+
+  -- git_only: only re-run detail columns (git status, diagnostics) without
+  -- rewriting buffer lines. Avoids the flicker caused by set_lines when the
+  -- file tree has not changed (e.g. after a git commit/add/reset).
+  if opts.git_only then
+    vim.schedule(function()
+      require("fyler.views.finder.ui").refresh_details(
+        self.files:totable(),
+        function(component, options) self.win.ui:render(component, options, opts.onrender) end
+      )
+    end)
+    return
+  end
 
   -- Smart file system calculation, Use cache if not `opts.update` mentioned
   local get_table = async.wrap(function(onupdate)

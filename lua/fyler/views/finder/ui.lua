@@ -359,6 +359,42 @@ M.files = Component.new_async(function(node, onupdate)
   )
 end)
 
+-- Refresh only the detail columns (git, diagnostic, etc.) for the current node,
+-- without rewriting buffer lines. This avoids the flicker caused by set_lines
+-- when the file tree has not changed (e.g. after a git commit).
+M.refresh_details = function(node, onupdate)
+  M.tag = M.tag + 1
+  local current_tag = M.tag
+
+  if not node or not node.children then return end
+
+  local flattened_entries = flatten_tree(node)
+  if #flattened_entries == 0 then return end
+
+  -- Rebuild files_column so highlights can be mutated by on_column_complete
+  local files_column = {}
+  for _, entry in ipairs(flattened_entries) do
+    local item, depth = entry.item, entry.depth
+    local icon, hl = icon_and_hl(item)
+    local icon_highlight = (item.type == "directory") and "FylerFSDirectoryIcon" or hl
+    local name_highlight = (item.type == "directory") and "FylerFSDirectoryName" or nil
+    icon = icon and (icon .. "  ") or ""
+
+    local indentation_text = Text(string.rep(" ", 2 * depth))
+    local icon_text = Text(icon, { highlight = icon_highlight })
+    local ref_id_text = item.ref_id and Text(string.format("/%05d ", item.ref_id)) or Text("")
+    local name_text = Text(item.name, { highlight = name_highlight })
+    table.insert(files_column, Row({ indentation_text, icon_text, ref_id_text, name_text }))
+  end
+
+  collect_and_render_details(
+    current_tag,
+    create_column_context(current_tag, node, flattened_entries, files_column),
+    files_column,
+    onupdate
+  )
+end
+
 M.operations = Component.new(function(operations)
   local types, details = {}, {}
   for _, operation in ipairs(operations) do
