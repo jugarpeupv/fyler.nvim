@@ -40,28 +40,37 @@ local function _select(self, opener, opts)
     or self.win.kind:match("^float")
     or config.values.views.finder.close_on_select
 
+  local function is_usable_win(winid)
+    if not vim.api.nvim_win_is_valid(winid) then return false end
+    if vim.api.nvim_win_get_config(winid).relative ~= "" then return false end
+    if vim.wo[winid].winfixbuf then return false end
+    return true
+  end
+
   local function get_target_window()
     -- When fyler stays open (should_close=false), never target the fyler window
     -- itself — doing so would open the file inside fyler's buffer.
     local fyler_winid = not should_close and self.win.winid or nil
 
-    if vim.api.nvim_win_is_valid(self.win.origin_win) and self.win.origin_win ~= fyler_winid then
+    if is_usable_win(self.win.origin_win) and self.win.origin_win ~= fyler_winid then
       return self.win.origin_win
     end
 
     for _, winid in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
-      if vim.api.nvim_win_get_config(winid).relative == "" and winid ~= fyler_winid then
+      if is_usable_win(winid) and winid ~= fyler_winid then
         self.win.origin_win = winid
         return winid
       end
     end
 
-    -- No suitable window found (fyler is the only window and should_close=false)
-    -- — return nil so open_in_window can create a new split beside fyler.
+    -- No suitable window found — return nil so open_in_window can create a new
+    -- split beside fyler.
     return nil
   end
 
   local function open_in_window(winid)
+    -- If a winid was passed in (e.g. from winpick), reject it if it's not usable
+    if winid and not is_usable_win(winid) then winid = nil end
     winid = winid or get_target_window()
 
     local fyler_win = self.win
@@ -70,11 +79,24 @@ local function _select(self, opener, opts)
     -- When fyler stays open and there is no other window to open the file in,
     -- create a new split beside fyler. Use nvim_open_win with a fresh buffer
     -- so the fyler buffer is never shown in the new window (avoids flicker).
-    -- Explicitly size the new window so fyler retains its configured width.
+    -- Explicitly size the new window so fyler retains its configured width,
+    -- and account for other fixed-width windows (e.g. opencode) so they are
+    -- not squished to zero by the new split.
     if not winid and not should_close then
       local new_buf = vim.api.nvim_create_buf(false, true)
       local fyler_width = fyler_win:config().width or math.floor(vim.o.columns * 0.3)
-      local new_width = vim.o.columns - fyler_width - 1 -- subtract 1 for the separator
+      -- Subtract the widths of other normal windows that already have
+      -- winfixwidth set so that the new window does not steal their space.
+      local fixed_others_width = 0
+      for _, wid in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+        if wid ~= fyler_win.winid
+          and vim.api.nvim_win_is_valid(wid)
+          and vim.api.nvim_win_get_config(wid).relative == ""
+          and vim.wo[wid].winfixwidth then
+          fixed_others_width = fixed_others_width + vim.api.nvim_win_get_width(wid) + 1
+        end
+      end
+      local new_width = math.max(vim.o.columns - fyler_width - 1 - fixed_others_width, 1)
       winid = vim.api.nvim_open_win(new_buf, true, { split = "right", win = fyler_win.winid, width = new_width })
       created_window = true
     end
