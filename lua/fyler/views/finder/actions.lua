@@ -65,13 +65,18 @@ local function _select(self, opener, opts)
     winid = winid or get_target_window()
 
     local fyler_win = self.win
+    local created_window = false
 
     -- When fyler stays open and there is no other window to open the file in,
-    -- create a new split to the right of the fyler window and use that.
+    -- create a new split beside fyler. Use nvim_open_win with a fresh buffer
+    -- so the fyler buffer is never shown in the new window (avoids flicker).
+    -- Explicitly size the new window so fyler retains its configured width.
     if not winid and not should_close then
-      vim.api.nvim_set_current_win(fyler_win.winid)
-      vim.cmd.vsplit({ mods = { keepalt = false } })
-      winid = vim.api.nvim_get_current_win()
+      local new_buf = vim.api.nvim_create_buf(false, true)
+      local fyler_width = fyler_win:config().width or math.floor(vim.o.columns * 0.3)
+      local new_width = vim.o.columns - fyler_width - 1 -- subtract 1 for the separator
+      winid = vim.api.nvim_open_win(new_buf, true, { split = "right", win = fyler_win.winid, width = new_width })
+      created_window = true
     end
 
     assert(winid and vim.api.nvim_win_is_valid(winid), "Unexpected invalid window")
@@ -80,20 +85,28 @@ local function _select(self, opener, opts)
 
     vim.api.nvim_set_current_win(winid)
 
-    opener(entry.path)
+    if created_window then
+      -- Window was freshly created by us — just edit the file in it directly
+      -- rather than letting opener split again.
+      vim.cmd.edit({
+        args = { vim.fn.fnameescape(Path.new(entry.path):os_path()) },
+        mods = { keepalt = false },
+      })
+    else
+      -- Ensure fyler's winfixwidth is set during the split so Neovim does not
+      -- touch its width while still allowing equalalways to distribute the
+      -- other windows freely. Restore the original value after.
+      local saved_fyler_winfixwidth = nil
+      if not should_close and fyler_win and fyler_win.width and fyler_win:has_valid_winid() then
+        saved_fyler_winfixwidth = vim.wo[fyler_win.winid].winfixwidth
+        vim.wo[fyler_win.winid].winfixwidth = true
+      end
 
-    -- Restore fyler window width after a split, since Neovim redistributes
-    -- all window widths when a new split is created (winfixwidth only prevents
-    -- manual resizing, not automatic redistribution).
-    if not should_close and fyler_win and fyler_win.width then
-      vim.schedule(function()
-        if fyler_win:has_valid_winid() then
-          local win_config = fyler_win:config()
-          if win_config.width then
-            vim.api.nvim_win_set_width(fyler_win.winid, win_config.width)
-          end
-        end
-      end)
+      opener(entry.path)
+
+      if saved_fyler_winfixwidth ~= nil and fyler_win:has_valid_winid() then
+        vim.wo[fyler_win.winid].winfixwidth = saved_fyler_winfixwidth
+      end
     end
   end
 
