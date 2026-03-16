@@ -41,18 +41,39 @@ local function _select(self, opener, opts)
     or config.values.views.finder.close_on_select
 
   local function get_target_window()
-    if vim.api.nvim_win_is_valid(self.win.origin_win) then return self.win.origin_win end
+    -- When fyler stays open (should_close=false), never target the fyler window
+    -- itself — doing so would open the file inside fyler's buffer.
+    local fyler_winid = not should_close and self.win.winid or nil
+
+    if vim.api.nvim_win_is_valid(self.win.origin_win) and self.win.origin_win ~= fyler_winid then
+      return self.win.origin_win
+    end
 
     for _, winid in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
-      if vim.api.nvim_win_get_config(winid).relative == "" then
+      if vim.api.nvim_win_get_config(winid).relative == "" and winid ~= fyler_winid then
         self.win.origin_win = winid
         return winid
       end
     end
+
+    -- No suitable window found (fyler is the only window and should_close=false)
+    -- — return nil so open_in_window can create a new split beside fyler.
+    return nil
   end
 
   local function open_in_window(winid)
     winid = winid or get_target_window()
+
+    local fyler_win = self.win
+
+    -- When fyler stays open and there is no other window to open the file in,
+    -- create a new split to the right of the fyler window and use that.
+    if not winid and not should_close then
+      vim.api.nvim_set_current_win(fyler_win.winid)
+      vim.cmd.vsplit({ mods = { keepalt = false } })
+      winid = vim.api.nvim_get_current_win()
+    end
+
     assert(winid and vim.api.nvim_win_is_valid(winid), "Unexpected invalid window")
 
     if should_close then self:action_call("n_close") end
@@ -60,6 +81,20 @@ local function _select(self, opener, opts)
     vim.api.nvim_set_current_win(winid)
 
     opener(entry.path)
+
+    -- Restore fyler window width after a split, since Neovim redistributes
+    -- all window widths when a new split is created (winfixwidth only prevents
+    -- manual resizing, not automatic redistribution).
+    if not should_close and fyler_win and fyler_win.width then
+      vim.schedule(function()
+        if fyler_win:has_valid_winid() then
+          local win_config = fyler_win:config()
+          if win_config.width then
+            vim.api.nvim_win_set_width(fyler_win.winid, win_config.width)
+          end
+        end
+      end)
+    end
   end
 
   if opts.winpick then
