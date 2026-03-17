@@ -94,6 +94,11 @@ local M = {}
 
 M.tag = 0
 
+-- Cache of ref_id → highlight_group from the last completed Pass 2 (git/detail columns).
+-- Used in Pass 1 to pre-apply highlights so ignored/modified files never flash as
+-- unstyled text before the async git column arrives.
+M.highlight_cache = {}
+
 -- NOTE: Detail columns now return data via callback instead of directly updating UI
 local columns = {
   link = function(ctx, _, _next)
@@ -270,6 +275,15 @@ local function collect_and_render_details(tag, context, files_column, oncollect)
         end
       end
 
+      -- Update the highlight cache keyed by ref_id so Pass 1 can pre-apply
+      -- these highlights on the next render, eliminating the flash of unstyled text.
+      for index, highlight in pairs(all_highlights) do
+        local entry = context.entries[index]
+        if entry and entry.item and entry.item.ref_id then
+          M.highlight_cache[entry.item.ref_id] = highlight
+        end
+      end
+
       for index, highlight in pairs(all_highlights) do
         local row = files_column[index]
         if row and row.children then
@@ -335,7 +349,11 @@ M.files = Component.new_async(function(node, onupdate)
     local item, depth = entry.item, entry.depth
     local icon, hl = icon_and_hl(item)
     local icon_highlight = (item.type == "directory") and "FylerFSDirectoryIcon" or hl
-    local name_highlight = (item.type == "directory") and "FylerFSDirectoryName" or nil
+    -- Use the cached highlight from the last Pass 2 if available; this ensures
+    -- ignored/modified files are already styled correctly in Pass 1 so they
+    -- never flash as unstyled text before the async git column arrives.
+    local name_highlight = M.highlight_cache[item.ref_id]
+      or ((item.type == "directory") and "FylerFSDirectoryName" or nil)
     icon = icon and (icon .. "  ") or ""
 
     local indentation_text = Text(string.rep(" ", 2 * depth))
