@@ -64,12 +64,17 @@ function M.find_common_git_dir(git_dir)
   line = line:match("^%s*(.-)%s*$") -- trim
   if line == "" then return git_dir end
 
-  -- commondir can be an absolute path or relative to git_dir
+  -- commondir can be an absolute path or relative to git_dir.
+  -- Normalize with fnamemodify ":p" to resolve any ".." traversals so the
+  -- returned path is always a clean absolute path (e.g. worktrees commondir
+  -- files contain "../.." which vim.fs.joinpath leaves unresolved).
+  local raw
   if vim.startswith(line, "/") then
-    return line
+    raw = line
   else
-    return Path.new(git_dir):join(line):os_path()
+    raw = Path.new(git_dir):join(line):os_path()
   end
+  return vim.fn.fnamemodify(raw, ":p"):gsub("/$", "")
 end
 
 -- Unmerged / conflict codes where X and Y together have a single meaning

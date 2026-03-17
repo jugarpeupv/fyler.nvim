@@ -216,6 +216,11 @@ function Finder:change_root(path)
   -- This allows external consumers like winbar to read the current navigation path
   update_global_cwd(normalized_path)
 
+  -- Restart the git watcher for the new directory.  disable(true) above stopped
+  -- and cleared all watchers; start_git() resolves the new git dir from the
+  -- updated self.files root and creates fresh fs_event handles.
+  self.watcher:start_git()
+
   return self
 end
 

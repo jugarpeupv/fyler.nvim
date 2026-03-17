@@ -94,6 +94,13 @@ local M = {}
 
 M.tag = 0
 
+-- Cache of ref_id → highlight_group from the last completed Pass 2 (git/detail columns).
+-- Used in Pass 1 to pre-apply highlights so ignored/modified files never flash as
+-- unstyled text before the async git column arrives.
+-- Cleared per-entry before each update so stale highlights (e.g. after git commit
+-- removes staged status) don't linger.
+M.highlight_cache = {}
+
 -- NOTE: Detail columns now return data via callback instead of directly updating UI
 local columns = {
   link = function(ctx, _, _next)
@@ -281,6 +288,18 @@ local function collect_and_render_details(tag, context, files_column, oncollect)
         end
       end
 
+      -- Update the highlight cache keyed by ref_id so Pass 1 can pre-apply these
+      -- highlights on the next render, eliminating the flash of unstyled text.
+      -- First clear every currently-visible entry so files whose git status has
+      -- been removed (e.g. after git commit) don't keep a stale highlight.
+      for _, e in ipairs(context.entries) do
+        if e.item and e.item.ref_id then M.highlight_cache[e.item.ref_id] = nil end
+      end
+      for index, highlight in pairs(all_highlights) do
+        local e = context.entries[index]
+        if e and e.item and e.item.ref_id then M.highlight_cache[e.item.ref_id] = highlight end
+      end
+
       local detail_columns = { Column(files_column) }
       for _, col_name in ipairs(COLUMN_ORDER) do
         local result = results[col_name]
@@ -335,7 +354,11 @@ M.files = Component.new_async(function(node, onupdate)
     local item, depth = entry.item, entry.depth
     local icon, hl = icon_and_hl(item)
     local icon_highlight = (item.type == "directory") and "FylerFSDirectoryIcon" or hl
-    local name_highlight = (item.type == "directory") and "FylerFSDirectoryName" or nil
+    -- Use the cached highlight from the last Pass 2 if available; this ensures
+    -- ignored/modified/staged files are already styled in Pass 1 so they never
+    -- flash as unstyled text before the async git column arrives.
+    local name_highlight = M.highlight_cache[item.ref_id]
+      or ((item.type == "directory") and "FylerFSDirectoryName" or nil)
     icon = icon and (icon .. "  ") or ""
 
     local indentation_text = Text(string.rep(" ", 2 * depth))

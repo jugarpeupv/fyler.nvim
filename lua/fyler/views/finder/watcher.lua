@@ -6,7 +6,7 @@ local git = require("fyler.lib.git")
 ---@class Watcher
 ---@field paths table<string, { fsevent: uv.uv_fs_event_t, running: boolean }>
 ---@field git_fsevent uv.uv_fs_event_t|nil
----@field git_common_fsevent uv.uv_fs_event_t|nil
+---@field git_refs_fsevents uv.uv_fs_event_t[]  watchers for refs/heads/ and its subdirs
 ---@field git_dir string|nil
 ---@field git_common_dir string|nil
 ---@field finder Finder
@@ -17,7 +17,7 @@ local instance = {}
 
 ---@return Watcher
 function Watcher.new(finder)
-  return setmetatable({ finder = finder, paths = {}, git_fsevent = nil, git_common_fsevent = nil, git_dir = nil, git_common_dir = nil }, Watcher)
+  return setmetatable({ finder = finder, paths = {}, git_fsevent = nil, git_refs_fsevents = {}, git_dir = nil, git_common_dir = nil }, Watcher)
 end
 
 ---@param dir string
@@ -72,6 +72,11 @@ end
 ---For worktrees, also watch the *common* git dir (where refs/heads lives) so
 ---that `git commit` is detected: commits update refs/heads/<branch> in the
 ---common dir, not in the worktree-specific dir.
+---
+---Because vim.uv fs_event is non-recursive, and branch names can contain a
+---slash (e.g. "feature/MAR-1156" → refs/heads/feature/MAR-1156), we watch
+---refs/heads/ itself AND every direct subdirectory of refs/heads/ so that
+---commits to namespaced branches are detected.
 function Watcher:start_git()
   if not config.values.views.finder.watcher.enabled then return self end
 
@@ -109,38 +114,87 @@ function Watcher:start_git()
     --   ORIG_HEAD   – git merge / git rebase
     --   MERGE_HEAD  – git merge in progress
     --   CHERRY_PICK_HEAD – git cherry-pick
+    --   packed-refs – git pack-refs / git gc (regular repos only; worktrees use
+    --                 the separate common-dir watcher added below)
     if filename == "index"
       or filename == "HEAD"
       or filename == "FETCH_HEAD"
       or filename == "ORIG_HEAD"
       or filename == "MERGE_HEAD"
       or filename == "CHERRY_PICK_HEAD"
+      or filename == "packed-refs"
       or vim.startswith(filename, "refs/")
     then
       on_git_event(err, filename)
     end
   end)
 
-  -- Watch the common git dir separately (for worktrees: refs/heads lives here).
-  -- In a regular (non-worktree) repo, common_dir == git_dir so we skip the
-  -- second watcher to avoid double-firing.
+  -- Watch refs/heads/ and all its direct subdirectories in the common git dir.
   --
-  -- We watch refs/heads/ directly rather than common_dir root because:
-  --   1. vim.uv fs_event is non-recursive by default on macOS
-  --   2. refs/heads/master is 2 levels deep from common_dir
-  --   3. Watching common_dir root would miss the actual file write
+  -- Why subdirectories: branch names like "feature/MAR-1156" produce the ref
+  -- file at refs/heads/feature/MAR-1156. vim.uv fs_event is non-recursive, so
+  -- a watcher on refs/heads/ alone never sees writes two levels deep.
+  -- We enumerate existing subdirs at startup and watch each one.
   if common_dir ~= git_dir then
     self.git_common_dir = common_dir
-    local refs_heads_dir = common_dir .. "/refs/heads"
+  end
 
-    -- Check the dir exists (bare repos always have it; safety guard)
-    if vim.uv.fs_stat(refs_heads_dir) then
-      self.git_common_fsevent = assert(vim.uv.new_fs_event())
-      self.git_common_fsevent:start(refs_heads_dir, {}, function(err, filename)
+  local refs_heads_dir = common_dir .. "/refs/heads"
+  local function watch_refs_dir(dir)
+    local ev = vim.uv.new_fs_event()
+    if not ev then return end
+    local ok = pcall(function()
+      ev:start(dir, {}, function(err, filename)
         if err or not filename then return end
-        -- Any write to refs/heads/* means a commit or branch update
         on_git_event(err, "refs/heads/" .. filename)
       end)
+    end)
+    if ok then
+      table.insert(self.git_refs_fsevents, ev)
+    else
+      pcall(function() ev:stop() end)
+    end
+  end
+
+  if vim.uv.fs_stat(refs_heads_dir) then
+    -- Watch refs/heads/ itself (catches simple branch names like "main", "develop")
+    watch_refs_dir(refs_heads_dir)
+
+    -- Watch each direct subdirectory (catches "feature/", "fix/", "release/", etc.)
+    local handle = vim.uv.fs_opendir(refs_heads_dir, nil, 32)
+    if handle then
+      local entries = vim.uv.fs_readdir(handle)
+      if entries then
+        for _, entry in ipairs(entries) do
+          if entry.type == "directory" then
+            watch_refs_dir(refs_heads_dir .. "/" .. entry.name)
+          end
+        end
+      end
+      vim.uv.fs_closedir(handle)
+    end
+  end
+
+  -- For worktrees, the common git dir is separate from git_dir, so the
+  -- git_fsevent above (which watches git_dir) won't see packed-refs updates
+  -- in common_dir.  Add a dedicated watcher on common_dir filtered to the
+  -- "packed-refs" file so that `git gc` / `git pack-refs` triggers a refresh.
+  if common_dir ~= git_dir then
+    local packed_ev = vim.uv.new_fs_event()
+    if packed_ev then
+      local ok = pcall(function()
+        packed_ev:start(common_dir, {}, function(err, filename)
+          if err or not filename then return end
+          if filename == "packed-refs" then
+            on_git_event(err, filename)
+          end
+        end)
+      end)
+      if ok then
+        table.insert(self.git_refs_fsevents, packed_ev)
+      else
+        pcall(function() packed_ev:stop() end)
+      end
     end
   end
 
@@ -152,10 +206,10 @@ function Watcher:stop_git()
     pcall(function() self.git_fsevent:stop() end)
     self.git_fsevent = nil
   end
-  if self.git_common_fsevent then
-    pcall(function() self.git_common_fsevent:stop() end)
-    self.git_common_fsevent = nil
+  for _, ev in ipairs(self.git_refs_fsevents) do
+    pcall(function() ev:stop() end)
   end
+  self.git_refs_fsevents = {}
   self.git_dir = nil
   self.git_common_dir = nil
 end
