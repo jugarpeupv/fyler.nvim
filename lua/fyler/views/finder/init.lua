@@ -58,10 +58,18 @@ end
 
 ---@param kind WinKind|nil
 function Finder:isopen(kind)
-  return self.win
-    and (kind and (self.win.kind == kind) or true)
-    and self.win:has_valid_winid()
-    and self.win:has_valid_bufnr()
+  if not self.win then return false end
+  if kind and self.win.kind ~= kind then return false end
+  if not self.win:has_valid_winid() then return false end
+  if not self.win:has_valid_bufnr() then return false end
+  -- Guard against recycled winid/bufnr: verify the window is actually showing
+  -- the fyler buffer (by name). Without this check, a freed winid/bufnr that
+  -- was recycled by Neovim for another window/buffer would cause isopen() to
+  -- return true when fyler is actually closed, making toggle a no-op on the
+  -- first press after close.
+  if self.win:winbuf() ~= self.win.bufnr then return false end
+  if vim.api.nvim_buf_get_name(self.win.bufnr) ~= self.win.bufname then return false end
+  return true
 end
 
 ---@param kind WinKind

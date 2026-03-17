@@ -372,6 +372,57 @@ function Win:show()
     end,
   })
 
+  -- For vertical split kinds (split_left_most, split_right_most, split_left,
+  -- split_right), pin fyler's width so that equalalways from other plugins
+  -- (e.g. opencode, codecompanion) doesn't shrink the sidebar.
+  --
+  -- Strategy:
+  --   1. Immediately set winfixwidth + enforce width (deferred via vim.schedule
+  --      so it fires after the initial equalalways redistribution on open).
+  --   2. Register a WinResized autocmd that re-enforces the width *after* any
+  --      subsequent resize event completes (via vim.schedule, so we don't cause
+  --      recursive WinResized loops). A re-entry guard ensures only one pending
+  --      correction is queued at a time.
+  local is_vsplit = self.kind and self.width and (
+    self.kind == "split_left" or self.kind == "split_left_most" or
+    self.kind == "split_right" or self.kind == "split_right_most"
+  )
+  if is_vsplit then
+    local winid = self.winid
+    local target_width = self:config().width
+    if winid and target_width then
+      -- Step 1: pin on open
+      vim.schedule(function()
+        if vim.api.nvim_win_is_valid(winid) then
+          vim.api.nvim_win_set_width(winid, target_width)
+          vim.wo[winid].winfixwidth = true
+        end
+      end)
+
+      -- Step 2: re-enforce after any subsequent resize, without looping.
+      -- vim.schedule defers the correction to after the current event (and any
+      -- chained autocmds) finishes, so setting the width here does not fire
+      -- WinResized synchronously inside this callback. The `_fixing` flag
+      -- prevents queuing more than one pending correction at a time.
+      local _fixing = false
+      vim.api.nvim_create_autocmd("WinResized", {
+        group = self.augroup,
+        callback = function()
+          if _fixing then return end
+          if not vim.api.nvim_win_is_valid(winid) then return end
+          if vim.api.nvim_win_get_width(winid) == target_width then return end
+          _fixing = true
+          vim.schedule(function()
+            _fixing = false
+            if vim.api.nvim_win_is_valid(winid) then
+              vim.api.nvim_win_set_width(winid, target_width)
+            end
+          end)
+        end,
+      })
+    end
+  end
+
   if self.render then self.render() end
 end
 
