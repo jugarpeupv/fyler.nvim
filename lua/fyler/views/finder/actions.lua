@@ -145,20 +145,7 @@ local function _select(self, opener, opts)
         mods = { keepalt = false },
       })
     else
-      -- Ensure fyler's winfixwidth is set during the split so Neovim does not
-      -- touch its width while still allowing equalalways to distribute the
-      -- other windows freely. Restore the original value after.
-      local saved_fyler_winfixwidth = nil
-      if not should_close and fyler_win and fyler_win.width and fyler_win:has_valid_winid() then
-        saved_fyler_winfixwidth = vim.wo[fyler_win.winid].winfixwidth
-        vim.wo[fyler_win.winid].winfixwidth = true
-      end
-
       opener(entry.path)
-
-      if saved_fyler_winfixwidth ~= nil and fyler_win:has_valid_winid() then
-        vim.wo[fyler_win.winid].winfixwidth = saved_fyler_winfixwidth
-      end
     end
   end
 
