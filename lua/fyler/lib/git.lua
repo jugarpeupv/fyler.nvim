@@ -151,12 +151,14 @@ function M.map_entries_async(root_dir, entries, _next)
         function(e)
           local status = status_map[e]
           -- If this entry has no direct status, check if it's inside an
-          -- untracked directory. git status --porcelain only reports the
-          -- top-level directory for fully untracked trees, so child entries
-          -- won't have their own status in the map.
+          -- untracked or ignored directory. git status --porcelain only reports
+          -- the top-level directory for fully untracked trees, so child entries
+          -- won't have their own status in the map.  Symlink entries whose
+          -- resolved target is outside the repo are also absent from the map;
+          -- they inherit ignored status from the nearest ignored ancestor.
           if not status then
             for dir_path, dir_status in pairs(status_map) do
-              if dir_status == "??" and vim.startswith(e, dir_path .. "/") then
+              if (dir_status == "??" or dir_status == "!!") and vim.startswith(e, dir_path .. "/") then
                 status = dir_status
                 break
               end
@@ -207,23 +209,40 @@ end
 function M.build_ignored_lookup_for_async(dir, stdin, _next)
   local paths = util.tbl_wrap(stdin)
 
-  -- Resolve symlink components so that `git check-ignore` does not fail with
-  -- "fatal: pathspec '...' is beyond a symbolic link" when paths traverse a
-  -- symlinked directory (e.g. node_modules/pkg -> .bun/pkg@1.0/node_modules/pkg).
-  -- We keep a resolved→original map so the lookup is keyed by the original
-  -- (unresolved) path, which is what map_entries_async looks up via status_map[e].
-  local resolved_paths = {}
+  -- git check-ignore rejects paths that are:
+  --   (a) outside the repository root ("outside repository"), or
+  --   (b) reached through a mid-path symlink ("beyond a symbolic link").
+  -- Either case causes git to exit 128, poisoning the entire batch and
+  -- producing an empty lookup (no gitignored highlights for any entry).
+  --
+  -- Strategy: for each path, resolve only the components that are themselves
+  -- symlinks using vim.uv.fs_realpath.  If the resolved path is still inside
+  -- `dir` we use it (fixes the "beyond a symlink" case).  If the resolved path
+  -- is outside `dir` (e.g. a workspace symlink like cdk-mar-patterns pointing to
+  -- ../../../../tmp/…), we skip that entry entirely — it cannot be governed by
+  -- this repo's .gitignore and should not be sent to git.  We keep a
+  -- resolved→original map so the lookup is keyed by the original path.
+  local dir_prefix = dir:gsub("/?$", "/") -- ensure trailing slash for prefix check
+  local safe_paths = {}
   local resolved_to_original = {}
+
   for _, p in ipairs(paths) do
-    local resolved = vim.fn.resolve(p)
-    table.insert(resolved_paths, resolved)
-    resolved_to_original[resolved] = p
+    local resolved = vim.uv.fs_realpath(p) or p
+    if vim.startswith(resolved, dir_prefix) or resolved == dir then
+      table.insert(safe_paths, resolved)
+      resolved_to_original[resolved] = p
+    end
+    -- paths outside the repo are silently dropped; they cannot match .gitignore
+  end
+
+  if #safe_paths == 0 then
+    return _next({})
   end
 
   local process = Process.new({
     path = "git",
     args = { "-C", dir, "check-ignore", "--stdin" },
-    stdin = table.concat(resolved_paths, "\n"),
+    stdin = table.concat(safe_paths, "\n"),
   })
 
   process:spawn_async(function(code)

@@ -43,62 +43,20 @@ end
 function Process:spawn_async(on_exit)
   assert(vim.fn.executable(self.path) == 1, string.format("executable not found: %s", self.path))
 
-  local options = {
-    args = self.args,
-    stdio = {
-      vim.uv.new_pipe(false),
-      vim.uv.new_pipe(false),
-      vim.uv.new_pipe(false),
-    },
-  }
+  local cmd = vim.list_extend({ self.path }, self.args or {})
 
-  -- Delay calling on_exit until stdout is fully drained.  The libuv process
-  -- exit callback fires as soon as the process dies, but the read_start
-  -- callbacks for stdout/stderr may still have buffered chunks queued.
-  -- Calling on_exit before those chunks are delivered means stdout_iter()
-  -- sees an incomplete (or empty) buffer.
-  --
-  -- Strategy: latch the exit code when the process exits, then fire on_exit
-  -- from the stdout EOF handler (data == nil) once all data has been read.
-  local exit_code = nil
-  local stdout_done = false
-
-  local function maybe_finish()
-    if exit_code ~= nil and stdout_done then
-      -- Schedule on the main loop: libuv callbacks (spawn exit and read_start)
-      -- run in a fast-event context where vim.api.* calls are forbidden.
-      -- vim.schedule ensures on_exit (and everything it calls) runs safely.
-      vim.schedule(function() on_exit(exit_code) end)
-    end
-  end
-
-  self.handle, self.pid = vim.uv.spawn(self.path, options, function(code)
-    exit_code = code
-    maybe_finish()
-  end)
-
-  vim.uv.write(options.stdio[1], self.stdin or "", function() vim.uv.close(options.stdio[1]) end)
-
-  vim.uv.read_start(options.stdio[2], function(_, data)
-    self.stdout = self.stdout or ""
-    if data then
-      self.stdout = self.stdout .. data
-    else
-      vim.uv.read_stop(options.stdio[2])
-      vim.uv.close(options.stdio[2])
-      stdout_done = true
-      maybe_finish()
-    end
-  end)
-
-  vim.uv.read_start(options.stdio[3], function(_, data)
-    self.stderr = self.stderr or ""
-    if data then
-      self.stderr = self.stderr .. data
-    else
-      vim.uv.read_stop(options.stdio[3])
-      vim.uv.close(options.stdio[3])
-    end
+  -- Use vim.system with a callback for async execution.  Unlike the previous
+  -- manual uv.spawn + uv.write approach, vim.system handles stdin of any size
+  -- correctly (the single uv.write would silently truncate stdin larger than
+  -- the OS pipe buffer, ~64 KB, causing git check-ignore to receive no input
+  -- and exit 1 when the visible file list is large).
+  vim.system(cmd, { text = true, stdin = self.stdin or "" }, function(out)
+    self.code   = out.code
+    self.signal = out.signal
+    self.stdout = out.stdout
+    self.stderr = out.stderr
+    -- vim.system callbacks already run in a scheduled context safe for vim.api.*
+    vim.schedule(function() on_exit(out.code) end)
   end)
 end
 

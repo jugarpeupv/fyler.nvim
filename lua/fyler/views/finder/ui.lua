@@ -83,7 +83,10 @@ local function create_column_context(tag, node, flattened_entries, files_column)
     end,
 
     get_all_paths = function()
-      return util.tbl_map(flattened_entries, function(entry) return entry.item.path end)
+      -- Use the symlink path (link) when available: the resolved target (path)
+      -- may be outside the repository, causing git check-ignore to exit 128 and
+      -- drop all gitignored highlights for the entire batch.
+      return util.tbl_map(flattened_entries, function(entry) return entry.item.link or entry.item.path end)
     end,
 
     get_files_column = function() return files_column end,
