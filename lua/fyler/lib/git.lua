@@ -205,10 +205,25 @@ end
 ---@param stdin string|string[]
 ---@param _next function
 function M.build_ignored_lookup_for_async(dir, stdin, _next)
+  local paths = util.tbl_wrap(stdin)
+
+  -- Resolve symlink components so that `git check-ignore` does not fail with
+  -- "fatal: pathspec '...' is beyond a symbolic link" when paths traverse a
+  -- symlinked directory (e.g. node_modules/pkg -> .bun/pkg@1.0/node_modules/pkg).
+  -- We keep a resolved→original map so the lookup is keyed by the original
+  -- (unresolved) path, which is what map_entries_async looks up via status_map[e].
+  local resolved_paths = {}
+  local resolved_to_original = {}
+  for _, p in ipairs(paths) do
+    local resolved = vim.fn.resolve(p)
+    table.insert(resolved_paths, resolved)
+    resolved_to_original[resolved] = p
+  end
+
   local process = Process.new({
     path = "git",
     args = { "-C", dir, "check-ignore", "--stdin" },
-    stdin = table.concat(util.tbl_wrap(stdin), "\n"),
+    stdin = table.concat(resolved_paths, "\n"),
   })
 
   process:spawn_async(function(code)
@@ -216,7 +231,13 @@ function M.build_ignored_lookup_for_async(dir, stdin, _next)
 
     if code == 0 then
       for _, line in process:stdout_iter() do
-        if line ~= "" then lookup[line] = "!!" end
+        if line ~= "" then
+          -- Map back to the original (unresolved) path so callers that index
+          -- by the original path (e.g. status_map[e] in map_entries_async) work
+          -- correctly even when the path passed through a symlinked directory.
+          local original = resolved_to_original[line] or line
+          lookup[original] = "!!"
+        end
       end
     end
 
