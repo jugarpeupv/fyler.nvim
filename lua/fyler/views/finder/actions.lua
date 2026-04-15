@@ -143,6 +143,7 @@ local function _select(self, opener, opts)
       vim.cmd.edit({
         args = { vim.fn.fnameescape(Path.new(entry.path):os_path()) },
         mods = { keepalt = false },
+        bang = true,
       })
     else
       opener(entry.path)
@@ -208,6 +209,7 @@ function M.n_select(self)
         vim.cmd.edit({
           args = { vim.fn.fnameescape(Path.new(path):os_path()) },
           mods = { keepalt = false },
+          bang = true,
         })
       end
     )
