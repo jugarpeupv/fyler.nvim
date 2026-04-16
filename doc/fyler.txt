@@ -242,7 +242,33 @@ To know more about plugin customization. visit:
 
 <
 ------------------------------------------------------------------------------
-                                                                   *fyler.setup*
+                                                                  *fyler.actions*
+ACTIONS
+
+Actions are string identifiers that can be bound to keys in the `mappings`
+table. To bind an action, add an entry to `views.finder.mappings`:
+
+>lua
+  mappings = {
+    ["<leader>gp"] = "TogglePermissions",
+  }
+<
+
+Available actions:
+
+  CloseView           Close the finder window.
+  Select              Open file or toggle directory expand/collapse.
+  SelectTab           Open file in a new tab.
+  SelectVSplit        Open file in a vertical split.
+  SelectSplit         Open file in a horizontal split.
+  GotoParent          Navigate to the parent directory.
+  GotoCwd             Navigate to the current working directory.
+  GotoNode            Navigate into the directory under the cursor.
+  CollapseAll         Collapse all open directory nodes.
+  CollapseNode        Collapse the directory node under the cursor.
+  TogglePermissions   Toggle the inline permissions column on/off.
+
+------------------------------------------------------------------------------
 INTEGRATIONS.ICON
 
 Icon provider for file and directory icons.

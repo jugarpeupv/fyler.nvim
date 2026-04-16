@@ -100,6 +100,8 @@ function M.setup()
     FylerGitIconUnstaged  = { link = "FylerGitUnstaged" },
     FylerGitIconUntracked = { link = "FylerGitUntracked" },
 
+    FylerPermissions     = { link = "Comment" },
+
     FylerWinPick         = { fg = palette.white, bg = palette.blue },
 
     -- Groups with link must be after non-linked

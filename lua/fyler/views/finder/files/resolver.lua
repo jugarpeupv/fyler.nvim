@@ -1,4 +1,5 @@
 local Path = require("fyler.lib.path")
+local config = require("fyler.config")
 local helper = require("fyler.views.finder.helper")
 local manager = require("fyler.views.finder.files.manager")
 local util = require("fyler.lib.util")
@@ -37,6 +38,24 @@ function Resolver:_parse_buffer()
     local entry_name = helper.parse_name(line)
     local entry_ref_id = helper.parse_ref_id(line)
     local entry_indent = helper.parse_indent_level(line)
+    -- Capture the permission string written inline (nil when column is off)
+    local entry_perms = helper.parse_permissions(line)
+    -- For new entries (no ref_id) detect directory intent from trailing "/"
+    local entry_is_dir = (not entry_ref_id) and helper.parse_is_directory(line)
+
+    -- Validate: when the permission column is enabled, every existing entry
+    -- (ref_id present) must have a well-formed 9-char permission string followed
+    -- by a space.  A missing or truncated string means the user made an invalid
+    -- edit – abort with a clear message so the caller can notify and rerender.
+    local perm_enabled = config.values.views.finder.columns.permission
+      and config.values.views.finder.columns.permission.enabled
+    if perm_enabled and entry_ref_id and not entry_perms then
+      local after_ref = line:match("/%d+ (.*)$") or ""
+      error(string.format(
+        "Invalid permission string %q – expected 9 chars (rwxrwxrwx) followed by a space",
+        after_ref:sub(1, 10)
+      ))
+    end
 
     while parent_stack:size() > 1 and parent_stack:top().indent >= entry_indent do
       parent_stack:pop()
@@ -49,6 +68,8 @@ function Resolver:_parse_buffer()
     local child_node = {
       ref_id = entry_ref_id,
       path = Path.new(parent_path):join(entry_name):posix_path(),
+      perms = entry_perms,
+      is_dir = entry_is_dir,
     }
 
     current_parent.node.type = "directory"
@@ -90,24 +111,43 @@ function Resolver:_generate_actions(parsed_tree)
 
   traverse(parsed_tree, function(node)
     if not node.ref_id then
-      table.insert(actions, { type = "create", path = node.path })
+      table.insert(actions, { type = "create", path = node.path, is_dir = node.is_dir })
     else
       new_ref[node.ref_id] = new_ref[node.ref_id] or {}
-      table.insert(new_ref[node.ref_id], node.path)
+      table.insert(new_ref[node.ref_id], { path = node.path, perms = node.perms })
     end
     return true
   end)
 
   local function insert_action(ref_id, old_path)
-    local dst_paths = new_ref[ref_id]
+    local dst_entries = new_ref[ref_id]
 
-    if not dst_paths then
+    if not dst_entries then
       table.insert(actions, { type = "delete", path = old_path })
       return
     end
 
+    -- Collect just the paths for move/copy logic (unchanged from before)
+    local dst_paths = {}
+    for _, e in ipairs(dst_entries) do table.insert(dst_paths, e.path) end
+
     if #dst_paths == 1 then
-      if dst_paths[1] ~= old_path then table.insert(actions, { type = "move", src = old_path, dst = dst_paths[1] }) end
+      if dst_paths[1] ~= old_path then
+        table.insert(actions, { type = "move", src = old_path, dst = dst_paths[1] })
+      end
+      -- Check for permission change (only when the file wasn't moved)
+      local new_perms = dst_entries[1].perms
+      if new_perms and dst_paths[1] == old_path then
+        local stat = vim.uv.fs_lstat(old_path)
+        if stat then
+          local ui = require("fyler.views.finder.ui")
+          local new_mode = ui.perms_to_mode(new_perms, stat.mode)
+          local old_mode = stat.mode % 512  -- lower 9 bits only
+          if new_mode and (new_mode % 512) ~= old_mode then
+            table.insert(actions, { type = "chmod", path = old_path, mode = new_mode })
+          end
+        end
+      end
       return
     end
 
@@ -139,6 +179,8 @@ function Resolver:_filter_actions(actions)
       return action.type .. ":" .. action.path
     elseif vim.list_contains({ "move", "copy" }, action.type) then
       return action.type .. ":" .. action.src .. "," .. action.dst
+    elseif action.type == "chmod" then
+      return "chmod:" .. action.path .. ":" .. tostring(action.mode)
     else
       error(string.format("Unexpected action type: %s", action.type))
     end
@@ -251,6 +293,8 @@ function Resolver:_topsort_actions(actions)
         dst_trie:insert(Path.new(action.path):segments(), append)
       elseif action.type == "delete" then
         src_trie:insert(Path.new(action.path):segments(), append)
+      elseif action.type == "chmod" then
+        -- chmod is in-place: no src/dst movement, no dependency on other actions
       else
         src_trie:insert(Path.new(action.src):segments(), append)
         dst_trie:insert(Path.new(action.dst):segments(), append)

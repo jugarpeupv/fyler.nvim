@@ -24,7 +24,7 @@ end
 
 local T = helper.new_set({
   hooks = {
-    pre_case = function() nvim.setup({ views = { finder = { columns_order = {} } } }) end,
+    pre_case = function() nvim.setup_no_perm({ views = { finder = { columns_order = {} } } }) end,
     post_case_once = nvim.stop,
   },
 })
@@ -46,7 +46,7 @@ T["Each WinKind Can"] = helper.new_set({
 
 T["Each WinKind Can"]["Open Without Arguments"] = function(kind)
   local path = make_tree({ "a-file", "b-file", "a-dir/", "b-dir/" })
-  nvim.setup({ views = { finder = { win = { kind = kind }, columns_order = {} } } })
+  nvim.setup_no_perm({ views = { finder = { win = { kind = kind }, columns_order = {} } } })
   nvim.fn.chdir(path)
   nvim.forward_lua("require('fyler').open")()
   vim.uv.sleep(20)

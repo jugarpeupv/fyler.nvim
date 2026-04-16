@@ -114,16 +114,17 @@ function Finder:open(kind)
     kind          = kind,
     left          = view_cfg.win.left,
     mappings      = {
-      [rev_maps["CloseView"]]    = self:action "n_close",
-      [rev_maps["CollapseAll"]]  = self:action "n_collapse_all",
-      [rev_maps["CollapseNode"]] = self:action "n_collapse_node",
-      [rev_maps["GotoCwd"]]      = self:action "n_goto_cwd",
-      [rev_maps["GotoNode"]]     = self:action "n_goto_node",
-      [rev_maps["GotoParent"]]   = self:action "n_goto_parent",
-      [rev_maps["Select"]]       = self:action "n_select",
-      [rev_maps["SelectSplit"]]  = self:action "n_select_split",
-      [rev_maps["SelectTab"]]    = self:action "n_select_tab",
-      [rev_maps["SelectVSplit"]] = self:action "n_select_v_split",
+      [rev_maps["CloseView"]]         = self:action "n_close",
+      [rev_maps["CollapseAll"]]        = self:action "n_collapse_all",
+      [rev_maps["CollapseNode"]]       = self:action "n_collapse_node",
+      [rev_maps["GotoCwd"]]            = self:action "n_goto_cwd",
+      [rev_maps["GotoNode"]]           = self:action "n_goto_node",
+      [rev_maps["GotoParent"]]         = self:action "n_goto_parent",
+      [rev_maps["Select"]]             = self:action "n_select",
+      [rev_maps["SelectSplit"]]        = self:action "n_select_split",
+      [rev_maps["SelectTab"]]          = self:action "n_select_tab",
+      [rev_maps["SelectVSplit"]]       = self:action "n_select_v_split",
+      [rev_maps["TogglePermissions"]]  = self:action "n_toggle_permission",
     },
     mappings_opts = view_cfg.mappings_opts,
     on_show       = function()
@@ -294,7 +295,7 @@ end
 
 ---@return boolean
 local function can_skip_confirmation(operations)
-  local count = { create = 0, delete = 0, move = 0, copy = 0 }
+  local count = { create = 0, delete = 0, move = 0, copy = 0, chmod = 0 }
 
   util.tbl_each(operations, function(o) count[o.type] = (count[o.type] or 0) + 1 end)
 
@@ -308,7 +309,7 @@ local function should_mutate(operations, cwd)
 
   return get_confirmation(require("fyler.views.finder.ui").operations(util.tbl_map(operations, function(operation)
     local result = vim.deepcopy(operation)
-    if operation.type == "create" or operation.type == "delete" then
+    if operation.type == "create" or operation.type == "delete" or operation.type == "chmod" then
       result.path = cwd:relative(operation.path) or operation.path
     else
       result.src = cwd:relative(operation.src) or operation.src
@@ -320,7 +321,16 @@ end
 
 function Finder:dispatch_mutation()
   async.void(function()
-    local operations = self.files:diff_with_buffer()
+    local ok, result = pcall(function() return self.files:diff_with_buffer() end)
+
+    if not ok then
+      -- diff_with_buffer raised (e.g. malformed permission string): notify and
+      -- rerender the buffer so the user sees the original valid content again.
+      vim.schedule_wrap(vim.notify)(tostring(result), vim.log.levels.WARN, { title = "Fyler" })
+      return self:dispatch_refresh()
+    end
+
+    local operations = result
 
     if vim.tbl_isempty(operations) then return self:dispatch_refresh() end
 

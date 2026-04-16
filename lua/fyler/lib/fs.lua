@@ -321,7 +321,7 @@ function M.create(opts, _next)
       return
     end
 
-    if Path.new(opts.path):is_directory() then
+    if opts.is_dir then
       M.mkdir({ path = opts.path }, _next)
     else
       M.touch({ path = opts.path }, _next)
@@ -367,6 +367,11 @@ function M.copy(opts, _next)
     dst = Path.new(opts.dst):os_path(),
     flags = { r = true },
   }, _next)
+end
+
+function M.chmod(opts, _next)
+  local path = Path.new(opts.path):os_path()
+  vim.uv.fs_chmod(path, opts.mode, function(err) pcall(_next, err) end)
 end
 
 function M.trash(...)

@@ -35,6 +35,7 @@ T["Side Effects"] = function()
   equal(nvim.fn.hlexists("FylerGitUnstaged"), 1)
   equal(nvim.fn.hlexists("FylerGitUntracked"), 1)
 
+  equal(nvim.fn.hlexists("FylerPermissions"), 1)
   equal(nvim.fn.hlexists("FylerWinPick"), 1)
 
   validate_hl_group("FylerNormal", "links to Normal")

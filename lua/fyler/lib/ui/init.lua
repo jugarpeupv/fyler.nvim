@@ -69,8 +69,9 @@ Ui.render = vim.schedule_wrap(function(self, component, ...)
   for _, highlight in ipairs(self.renderer.highlight) do
     -- stylua: ignore start
     self.win:set_extmark(highlight.line, highlight.col_start, {
-      end_col  = highlight.col_end,
-      hl_group = highlight.highlight_group,
+      end_col   = highlight.col_end,
+      hl_group  = highlight.highlight_group,
+      priority  = highlight.priority,
     })
     -- stylua: ignore end
   end

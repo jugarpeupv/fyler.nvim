@@ -48,7 +48,7 @@ end
 
 local T = helper.new_set({
   hooks = {
-    pre_case = function() nvim.setup({ views = { finder = { columns_order = {} } } }) end,
+    pre_case = function() nvim.setup_no_perm({ views = { finder = { columns_order = {} } } }) end,
     post_case_once = nvim.stop,
   },
 })
@@ -104,8 +104,11 @@ T["Each WinKind Can"]["Do Move Actions"] = function(kind)
   local path = make_tree({ "a-file", "a-dir/", "b-dir/", "b-dir/ba-file" })
   nvim.forward_lua("require('fyler').open")({ dir = path, kind = kind })
   vim.uv.sleep(20)
+  local function add_suffix(line, suffix)
+    return line .. suffix
+  end
   -- stylua: ignore
-  nvim.set_lines(0, 0, -1, false, vim.tbl_map(function(line) return line .. "-renamed" end, nvim.get_lines(0, 0, -1, false)))
+  nvim.set_lines(0, 0, -1, false, vim.tbl_map(function(line) return add_suffix(line, "-renamed") end, nvim.get_lines(0, 0, -1, false)))
   nvim.cmd("write")
   nvim.type_keys("y")
   vim.uv.sleep(20)
@@ -116,8 +119,11 @@ T["Each WinKind Can"]["Do Copy Actions"] = function(kind)
   local path = make_tree({ "a-file", "a-dir/", "b-dir/", "b-dir/ba-file" })
   nvim.forward_lua("require('fyler').open")({ dir = path, kind = kind })
   vim.uv.sleep(20)
+  local function add_suffix(line, suffix)
+    return line .. suffix
+  end
   -- stylua: ignore
-  nvim.set_lines(0, -1, -1, false, vim.tbl_map(function(line) return line .. "-copied" end, nvim.get_lines(0, 0, -1, false)))
+  nvim.set_lines(0, -1, -1, false, vim.tbl_map(function(line) return add_suffix(line, "-copied") end, nvim.get_lines(0, 0, -1, false)))
   nvim.cmd("write")
   nvim.type_keys("y")
   vim.uv.sleep(20)

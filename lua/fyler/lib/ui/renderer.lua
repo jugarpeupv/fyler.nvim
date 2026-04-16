@@ -65,6 +65,7 @@ function Renderer:_render_text(component, current_col)
         col_start = current_col,
         col_end = current_col + #text_value,
         highlight_group = highlight,
+        priority = component.option and component.option.priority,
       })
     end
 
@@ -91,6 +92,7 @@ function Renderer:_render_text(component, current_col)
         col_start = 0,
         col_end = #text_value,
         highlight_group = highlight,
+        priority = component.option and component.option.priority,
       })
     end
   end
@@ -204,6 +206,7 @@ function Renderer:_render_column_in_row(component, current_col)
       col_start = column_start_col + hl.col_start,
       col_end = column_start_col + hl.col_end,
       highlight_group = hl.highlight_group,
+      priority = hl.priority,
     })
   end
 

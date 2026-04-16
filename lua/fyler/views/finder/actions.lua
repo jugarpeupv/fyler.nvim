@@ -341,4 +341,13 @@ function M.n_set_cwd_to_node(self)
   end
 end
 
+---@param self Finder
+function M.n_toggle_permission(self)
+  return function()
+    local perm_cfg = config.values.views.finder.columns.permission
+    perm_cfg.enabled = not perm_cfg.enabled
+    self:dispatch_refresh({ force_update = true })
+  end
+end
+
 return M

@@ -22,7 +22,7 @@ end
 
 local T = helper.new_set({
   hooks = {
-    pre_case = function() nvim.setup({ views = { finder = { columns_order = {} } } }) end,
+    pre_case = function() nvim.setup_no_perm({ views = { finder = { columns_order = {} } } }) end,
     post_case_once = nvim.stop,
   },
 })

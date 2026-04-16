@@ -12,6 +12,51 @@ local Column = Ui.Column
 
 local COLUMN_ORDER = config.values.views.finder.columns_order
 
+-- Returns the 9-char rwxrwxrwx permission string for a path (no type prefix).
+-- Always returns exactly 9 characters so the inline column is fixed-width.
+local function get_permissions(path)
+  local stat = Path.new(path):lstats()
+  if not stat then return "---------" end
+
+  local mode = stat.mode
+  local p = {
+    (mode % 512 >= 256) and "r" or "-",
+    (mode % 256 >= 128) and "w" or "-",
+    (mode % 128 >= 64)  and "x" or "-",
+    (mode % 64  >= 32)  and "r" or "-",
+    (mode % 32  >= 16)  and "w" or "-",
+    (mode % 16  >= 8)   and "x" or "-",
+    (mode % 8   >= 4)   and "r" or "-",
+    (mode % 4   >= 2)   and "w" or "-",
+    (mode % 2   >= 1)   and "x" or "-",
+  }
+  return table.concat(p)
+end
+
+-- Convert a 9-char rwxrwxrwx string back to an integer mode (lower 9 bits).
+-- Returns nil if the string is not exactly 9 valid permission chars.
+local function perms_to_mode(perm_str, stat_type)
+  if not perm_str or #perm_str ~= 9 then return nil end
+  local bits = {256, 128, 64, 32, 16, 8, 4, 2, 1}
+  local mode = 0
+  for i = 1, 9 do
+    local ch = perm_str:sub(i, i)
+    local expected = (i % 3 == 0) and "x" or (i % 3 == 1) and "r" or "w"
+    if ch == expected then
+      mode = mode + bits[i]
+    elseif ch ~= "-" then
+      return nil  -- invalid character
+    end
+  end
+  -- Preserve the file-type bits from the existing stat mode (upper bits).
+  -- stat_type_bits: file=0o100000 (32768), dir=0o040000 (16384), link=0o120000 (40960)
+  if stat_type then
+    local upper = stat_type - (stat_type % 4096)  -- mask lower 12 bits
+    mode = upper + mode
+  end
+  return mode
+end
+
 local function sort_nodes(nodes)
   table.sort(nodes, function(x, y)
     local x_is_dir = x.type == "directory"
@@ -96,6 +141,8 @@ end
 local M = {}
 
 M.tag = 0
+M.get_permissions = get_permissions
+M.perms_to_mode   = perms_to_mode
 
 -- Cache of ref_id → highlight_group from the last completed Pass 2 (git/detail columns).
 -- Used in Pass 1 to pre-apply highlights so ignored/modified files never flash as
@@ -157,52 +204,6 @@ local columns = {
 
       _next({ column = column, highlights = highlights })
     end)
-  end,
-
-  permission = function(ctx, _, _next)
-    local function get_permissions(path)
-      local stat = Path.new(path):lstats()
-      if not stat then return "----------" end
-
-      local mode = stat.mode
-      local perms = {}
-
-      if stat.type == "directory" then
-        table.insert(perms, "d")
-      elseif stat.type == "link" then
-        table.insert(perms, "l")
-      else
-        table.insert(perms, "-")
-      end
-
-      table.insert(perms, (mode % 512 >= 256) and "r" or "-")
-      table.insert(perms, (mode % 256 >= 128) and "w" or "-")
-      table.insert(perms, (mode % 128 >= 64) and "x" or "-")
-
-      table.insert(perms, (mode % 64 >= 32) and "r" or "-")
-      table.insert(perms, (mode % 32 >= 16) and "w" or "-")
-      table.insert(perms, (mode % 16 >= 8) and "x" or "-")
-
-      table.insert(perms, (mode % 8 >= 4) and "r" or "-")
-      table.insert(perms, (mode % 4 >= 2) and "w" or "-")
-      table.insert(perms, (mode % 2 >= 1) and "x" or "-")
-
-      return table.concat(perms)
-    end
-
-    local highlights, column = {}, {}
-
-    for i = 1, #ctx.entries do
-      local entry_data = ctx.get_entry_data(i)
-      if entry_data then
-        local perms = get_permissions(entry_data.item.link or entry_data.path)
-        table.insert(column, Text(nil, { virt_text = { { perms, "Comment" } }, virt_text_pos = "eol" }))
-      else
-        table.insert(column, Text(nil, { virt_text = { { "" } } }))
-      end
-    end
-
-    _next({ column = column, highlights = highlights })
   end,
 
   size = function(ctx, _, _next)
@@ -283,7 +284,7 @@ local function collect_and_render_details(tag, context, files_column, oncollect)
       for index, highlight in pairs(all_highlights) do
         local row = files_column[index]
         if row and row.children then
-          local name_component = row.children[4]
+          local name_component = row.children[5]
           if name_component then
             name_component.option = name_component.option or {}
             name_component.option.highlight = highlight
@@ -352,6 +353,9 @@ M.files = Component.new_async(function(node, onupdate)
   local flattened_entries = flatten_tree(node)
   if #flattened_entries == 0 then return onupdate({ tag = "files", children = {} }) end
 
+  local perm_enabled = config.values.views.finder.columns.permission
+    and config.values.views.finder.columns.permission.enabled
+
   local files_column = {}
   for _, entry in ipairs(flattened_entries) do
     local item, depth = entry.item, entry.depth
@@ -367,8 +371,11 @@ M.files = Component.new_async(function(node, onupdate)
     local indentation_text = Text(string.rep(" ", 2 * depth))
     local icon_text = Text(icon, { highlight = icon_highlight })
     local ref_id_text = item.ref_id and Text(string.format("/%05d ", item.ref_id)) or Text("")
+    local perm_text = perm_enabled
+      and Text(get_permissions(item.link or item.path) .. " ", { highlight = "Comment", priority = 200 })
+      or Text("")
     local name_text = Text(item.name, { highlight = name_highlight })
-    table.insert(files_column, Row({ indentation_text, icon_text, ref_id_text, name_text }))
+    table.insert(files_column, Row({ indentation_text, icon_text, ref_id_text, perm_text, name_text }))
   end
 
   -- First pass: render the file tree immediately so the buffer is populated
@@ -398,6 +405,9 @@ M.refresh_details = function(node, onupdate)
   if #flattened_entries == 0 then return end
 
   -- Rebuild files_column so highlights can be mutated by on_column_complete
+  local perm_enabled = config.values.views.finder.columns.permission
+    and config.values.views.finder.columns.permission.enabled
+
   local files_column = {}
   for _, entry in ipairs(flattened_entries) do
     local item, depth = entry.item, entry.depth
@@ -409,8 +419,11 @@ M.refresh_details = function(node, onupdate)
     local indentation_text = Text(string.rep(" ", 2 * depth))
     local icon_text = Text(icon, { highlight = icon_highlight })
     local ref_id_text = item.ref_id and Text(string.format("/%05d ", item.ref_id)) or Text("")
+    local perm_text = perm_enabled
+      and Text(get_permissions(item.link or item.path) .. " ", { highlight = "Comment", priority = 200 })
+      or Text("")
     local name_text = Text(item.name, { highlight = name_highlight })
-    table.insert(files_column, Row({ indentation_text, icon_text, ref_id_text, name_text }))
+    table.insert(files_column, Row({ indentation_text, icon_text, ref_id_text, perm_text, name_text }))
   end
 
   collect_and_render_details(
@@ -439,6 +452,9 @@ M.operations = Component.new(function(operations)
     elseif operation.type == "copy" then
       table.insert(types, Text("COPY", { highlight = "FylerBlue" }))
       table.insert(details, Row({ Text(operation.src), Text(" > "), Text(operation.dst) }))
+    elseif operation.type == "chmod" then
+      table.insert(types, Text("CHMOD", { highlight = "FylerYellow" }))
+      table.insert(details, Row({ Text(operation.path), Text(" → mode "), Text(string.format("%o", operation.mode % 512)) }))
     else
       error(string.format("Unknown operation type '%s'", operation.type))
     end
