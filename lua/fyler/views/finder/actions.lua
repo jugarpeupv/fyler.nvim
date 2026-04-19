@@ -350,4 +350,142 @@ function M.n_toggle_permission(self)
   end
 end
 
+-- ---------------------------------------------------------------------------
+-- Clipboard: visual yank / visual cut / paste
+-- ---------------------------------------------------------------------------
+
+---Collect paths from the visual line selection and write them to the
+---fyler clipboard. action = "copy"|"move".
+---@param self Finder
+---@param action "copy"|"move"
+local function v_collect(self, action)
+  local esc = vim.api.nvim_replace_termcodes("<Esc>", true, false, true)
+  vim.api.nvim_feedkeys(esc, "x", false)
+
+  local first = vim.fn.line("'<")
+  local last  = vim.fn.line("'>")
+  local lines = vim.api.nvim_buf_get_lines(self.win.bufnr, first - 1, last, false)
+
+  local clipboard = require("fyler.views.finder.clipboard")
+  clipboard.clear(self)
+  self.clipboard = { action = action, paths = {} }
+
+  local any = false
+  for _, line in ipairs(lines) do
+    local ref_id = helper.parse_ref_id(line)
+    if ref_id then
+      local entry = self.files:node_entry(ref_id)
+      if entry then
+        self.clipboard.paths[entry.link or entry.path] = true
+        any = true
+      end
+    end
+  end
+
+  if any then
+    clipboard.flush(self)
+    local label = action == "move" and "Cut" or "Yanked"
+    local names = vim.tbl_keys(self.clipboard.paths)
+    table.sort(names)
+    local display = vim.tbl_map(function(p) return vim.fs.basename(p) end, names)
+    vim.notify(
+      string.format("[Fyler] %s %d file(s): %s", label, #display, table.concat(display, ", ")),
+      vim.log.levels.INFO
+    )
+  end
+end
+
+---@param self Finder
+function M.v_yank(self)
+  return function() v_collect(self, "copy") end
+end
+
+---@param self Finder
+function M.v_cut(self)
+  return function() v_collect(self, "move") end
+end
+
+---@param self Finder
+function M.n_paste(self)
+  return function()
+    local clipboard = require("fyler.views.finder.clipboard")
+    local async = require("fyler.lib.async")
+
+    async.void(function()
+      local payload = clipboard.read()
+      if not payload or #payload.paths == 0 then return end
+
+      local cwd = self:getcwd()
+
+      -- Build operations
+      local operations = {}
+      for _, src in ipairs(payload.paths) do
+        local name = vim.fs.basename(src)
+        local dst = Path.new(cwd):join(name):posix_path()
+        table.insert(operations, {
+          type = payload.action == "move" and "move" or "copy",
+          src = src,
+          dst = dst,
+        })
+      end
+
+      if vim.tbl_isempty(operations) then return end
+
+      -- Show confirmation dialog (always — mirrors the existing mutation pattern)
+      local relative_cwd = Path.new(cwd)
+      local display_ops = vim.tbl_map(function(op)
+        local result = vim.deepcopy(op)
+        result.src = relative_cwd:relative(op.src) or op.src
+        result.dst = op.dst
+        return result
+      end, operations)
+
+      local get_confirmation = async.wrap(
+        vim.schedule_wrap(function(...) require("fyler.input").confirm.open(...) end)
+      )
+
+      local confirmed = get_confirmation(
+        require("fyler.views.finder.ui").operations(display_ops)
+      )
+      if not confirmed then return end
+
+      -- Execute sequentially, same pattern as run_mutation
+      local fs = require("fyler.lib.fs")
+      local spinner = require("fyler.lib.spinner").new(
+        string.format("Pasting (0/%d)", #operations)
+      )
+      spinner:start()
+
+      local run = async.wrap(function(op, _next)
+        fs[op.type](op, _next)
+        return op.dst
+      end)
+
+      for i, op in ipairs(operations) do
+        local err = run(op)
+        if err then
+          vim.schedule_wrap(vim.notify)(
+            tostring(err), vim.log.levels.ERROR, { title = "Fyler" }
+          )
+        end
+        spinner:set_text(string.format("Pasting (%d/%d)", i, #operations))
+      end
+
+      spinner:stop()
+
+      clipboard.clear(self)
+      self:dispatch_refresh({ force_update = true })
+
+      -- Report full destination paths
+      local dsts = vim.tbl_map(function(op) return op.dst end, operations)
+      vim.schedule(function()
+        vim.notify(
+          string.format("[Fyler] Pasted %d file(s):\n%s", #dsts, table.concat(dsts, "\n")),
+          vim.log.levels.INFO
+        )
+      end)
+    end)
+  end
+end
+
 return M

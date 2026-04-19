@@ -251,22 +251,38 @@ table. To bind an action, add an entry to `views.finder.mappings`:
 >lua
   mappings = {
     ["<leader>gp"] = "TogglePermissions",
+    -- visual (x) mode bindings
+    ["y"] = "VisualYankEntries",
+    ["d"] = "VisualCutEntries",
+    -- normal mode
+    ["p"] = "PasteEntry",
   }
 <
 
 Available actions:
 
-  CloseView           Close the finder window.
-  Select              Open file or toggle directory expand/collapse.
-  SelectTab           Open file in a new tab.
-  SelectVSplit        Open file in a vertical split.
-  SelectSplit         Open file in a horizontal split.
-  GotoParent          Navigate to the parent directory.
-  GotoCwd             Navigate to the current working directory.
-  GotoNode            Navigate into the directory under the cursor.
-  CollapseAll         Collapse all open directory nodes.
-  CollapseNode        Collapse the directory node under the cursor.
-  TogglePermissions   Toggle the inline permissions column on/off.
+  CloseView             Close the finder window.
+  Select                Open file or toggle directory expand/collapse.
+  SelectTab             Open file in a new tab.
+  SelectVSplit          Open file in a vertical split.
+  SelectSplit           Open file in a horizontal split.
+  GotoParent            Navigate to the parent directory.
+  GotoCwd               Navigate to the current working directory.
+  GotoNode              Navigate into the directory under the cursor.
+  CollapseAll           Collapse all open directory nodes.
+  CollapseNode          Collapse the directory node under the cursor.
+  TogglePermissions     Toggle the inline permissions column on/off.
+  VisualYankEntries     (visual mode) Mark all entries in the visual
+                        selection for copy. Writes to the system clipboard
+                        (+) in fyler's format. Works across Neovim instances.
+  VisualCutEntries      (visual mode) Mark all entries in the visual
+                        selection for move. Same as VisualYankEntries but
+                        marks for move instead of copy.
+  PasteEntry            (normal mode) Paste clipboard entries into the
+                        current directory. Always shows a confirmation dialog
+                        before executing. After a VisualCutEntries paste the
+                        source instance will only auto-refresh when
+                        watcher.enabled = true.
 
 ------------------------------------------------------------------------------
 INTEGRATIONS.ICON

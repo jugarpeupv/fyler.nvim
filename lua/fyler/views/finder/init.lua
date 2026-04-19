@@ -125,11 +125,29 @@ function Finder:open(kind)
       [rev_maps["SelectTab"]]          = self:action "n_select_tab",
       [rev_maps["SelectVSplit"]]       = self:action "n_select_v_split",
       [rev_maps["TogglePermissions"]]  = self:action "n_toggle_permission",
+      [rev_maps["PasteEntry"]]         = self:action "n_paste",
     },
     mappings_opts = view_cfg.mappings_opts,
     on_show       = function()
       self.watcher:enable()
       indent.attach(self.win)
+      -- Visual-mode actions: registered as "x" so they capture the line range
+      -- from the visual selection. Cannot go through the normal mappings table
+      -- which is hardcoded to "n" mode.
+      local mopts = vim.tbl_extend("force", view_cfg.mappings_opts or {}, { buffer = self.win.bufnr })
+      local v_maps = {
+        VisualYankEntries = self:action("v_yank"),
+        VisualCutEntries  = self:action("v_cut"),
+      }
+      local rv = config.rev_maps("finder")
+      for action_name, fn in pairs(v_maps) do
+        local keys = rv[action_name]
+        if type(keys) == "table" then
+          for _, k in ipairs(keys) do
+            vim.keymap.set("x", k, fn, mopts)
+          end
+        end
+      end
     end,
     on_hide       = function()
       self.watcher:disable()
@@ -185,6 +203,7 @@ function Finder:cursor_node_entry()
 end
 
 function Finder:close()
+  require("fyler.views.finder.clipboard").clear(self)
   if self.win then self.win:hide() end
 end
 
@@ -196,6 +215,7 @@ function Finder:change_root(path)
   assert(path, "cannot change directory without path")
   assert(Path.new(path):is_directory(), "cannot change to non-directory path")
 
+  require("fyler.views.finder.clipboard").clear(self)
   self.watcher:disable(true)
   self.files = require("fyler.views.finder.files").new({
     open = true,
@@ -256,7 +276,9 @@ function Finder:dispatch_refresh(opts)
     vim.schedule(function()
       require("fyler.views.finder.ui").files(
         files_table,
-        function(component, options) self.win.ui:render(component, options, opts.onrender) end
+        function(component, options)
+          self.win.ui:render(component, options, opts.onrender)
+        end
       )
     end)
   end)

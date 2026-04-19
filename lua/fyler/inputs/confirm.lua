@@ -46,6 +46,7 @@ function Confirm:open(options, message, onsubmit)
         pcall(onsubmit, false)
       end
     },
+    mappings_opts = { nowait = true, noremap = true, silent = true },
     autocmds   = {
       QuitPre = function()
         local cmd = util.cmd_history()
