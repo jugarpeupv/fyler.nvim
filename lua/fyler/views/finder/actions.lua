@@ -359,11 +359,13 @@ end
 ---@param self Finder
 ---@param action "copy"|"move"
 local function v_collect(self, action)
-  local esc = vim.api.nvim_replace_termcodes("<Esc>", true, false, true)
-  vim.api.nvim_feedkeys(esc, "x", false)
-
-  local first = vim.fn.line("'<")
-  local last  = vim.fn.line("'>")
+  -- When the keymap fires from visual mode the '</'> marks may not be set yet
+  -- (first ever visual selection in this buffer). Read the live cursor and "v"
+  -- anchor positions instead, which are always valid while in visual mode.
+  local cur   = vim.fn.line(".")
+  local anch  = vim.fn.line("v")
+  local first = math.min(cur, anch)
+  local last  = math.max(cur, anch)
   local lines = vim.api.nvim_buf_get_lines(self.win.bufnr, first - 1, last, false)
 
   local clipboard = require("fyler.views.finder.clipboard")
@@ -393,6 +395,13 @@ local function v_collect(self, action)
       vim.log.levels.INFO
     )
   end
+
+  -- Exit visual mode in the next tick so the mode-change redraw doesn't
+  -- clear the notification message that was just queued above.
+  vim.schedule(function()
+    local esc = vim.api.nvim_replace_termcodes("<Esc>", true, false, true)
+    vim.api.nvim_feedkeys(esc, "nx", false)
+  end)
 end
 
 ---@param self Finder

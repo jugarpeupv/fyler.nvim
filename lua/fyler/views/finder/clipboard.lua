@@ -6,7 +6,7 @@ M.PREFIX = "fyler://"
 ---@param finder Finder
 function M.flush(finder)
   if not finder.clipboard or vim.tbl_isempty(finder.clipboard.paths) then
-    vim.fn.setreg("+", "")
+    vim.schedule(function() vim.fn.setreg("+", "") end)
     return
   end
 
@@ -14,7 +14,7 @@ function M.flush(finder)
   table.sort(paths)
 
   local payload = vim.json.encode({ action = finder.clipboard.action, paths = paths })
-  vim.fn.setreg("+", M.PREFIX .. payload)
+  vim.schedule(function() vim.fn.setreg("+", M.PREFIX .. payload) end)
 end
 
 ---Read the system clipboard and decode a fyler payload.
@@ -38,7 +38,7 @@ end
 function M.clear(finder)
   if not finder.clipboard then return end
   finder.clipboard = { action = nil, paths = {} }
-  vim.fn.setreg("+", "")
+  vim.schedule(function() vim.fn.setreg("+", "") end)
 end
 
 return M
