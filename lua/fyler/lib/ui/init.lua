@@ -58,17 +58,43 @@ Ui.render = vim.schedule_wrap(function(self, component, ...)
   -- Render Ui components to neovim api compatible
   self.renderer:render(component)
 
+  -- When the window has a header line (line 0), the renderer output occupies
+  -- lines 1..N. Shift all line indices reported by the renderer by +1 so
+  -- extmarks land on the correct rows after the header is written.
+  local line_offset = (self.win.header ~= nil) and 1 or 0
+
   if not opts.partial then
-    -- Full render: replace buffer lines (also clears namespace via set_lines)
-    self.win:set_lines(0, -1, self.renderer.line)
+    if self.win.header then
+      -- Write the header at row 0, then file lines at rows 1..N.
+      -- Use a single set_lines call that prepends the header so the
+      -- on_lines extmark-shift logic sees one atomic write.
+      local all_lines = vim.list_extend({ self.win.header }, self.renderer.line)
+      self.win:set_lines(0, -1, all_lines)
+      -- Highlight the header line as a directory path
+      self.win:set_extmark(0, 0, {
+        end_col  = #self.win.header,
+        hl_group = "NvimTreeRootFolder",
+        priority = 100,
+      })
+    else
+      self.win:set_lines(0, -1, self.renderer.line)
+    end
   else
     -- Partial render: keep buffer lines, only refresh extmarks
     self.win:clear_extmarks()
+    -- Re-apply header highlight after clearing extmarks
+    if self.win.header then
+      self.win:set_extmark(0, 0, {
+        end_col  = #self.win.header,
+        hl_group = "NvimTreeRootFolder",
+        priority = 100,
+      })
+    end
   end
 
   for _, highlight in ipairs(self.renderer.highlight) do
     -- stylua: ignore start
-    self.win:set_extmark(highlight.line, highlight.col_start, {
+    self.win:set_extmark(highlight.line + line_offset, highlight.col_start, {
       end_col   = highlight.col_end,
       hl_group  = highlight.highlight_group,
       priority  = highlight.priority,
@@ -78,7 +104,7 @@ Ui.render = vim.schedule_wrap(function(self, component, ...)
 
   for _, extmark in ipairs(self.renderer.extmark) do
     -- stylua: ignore start
-    self.win:set_extmark(extmark.line, 0, {
+    self.win:set_extmark(extmark.line + line_offset, 0, {
       hl_mode           = extmark.hl_mode,
       virt_text         = extmark.virt_text,
       virt_text_pos     = extmark.virt_text_pos,

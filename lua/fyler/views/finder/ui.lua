@@ -57,6 +57,17 @@ local function perms_to_mode(perm_str, stat_type)
   return mode
 end
 
+-- On Linux, birthtime is not reliably exposed by the kernel; fall back to ctime.
+local _is_linux = vim.uv.os_uname().sysname == "Linux"
+local function _creation_time(stat)
+  if not stat then return 0 end
+  local t = _is_linux and stat.ctime or stat.birthtime
+  return t.sec + t.nsec * 1e-9
+end
+
+-- "name" (default) | "creation_time"
+local sort_order = "name"
+
 local function sort_nodes(nodes)
   table.sort(nodes, function(x, y)
     local x_is_dir = x.type == "directory"
@@ -66,6 +77,12 @@ local function sort_nodes(nodes)
     elseif not x_is_dir and y_is_dir then
       return false
     else
+      if sort_order == "creation_time" then
+        local bx = _creation_time(vim.uv.fs_stat(x.path))
+        local by = _creation_time(vim.uv.fs_stat(y.path))
+        -- ascending: newer items (higher time) appear first
+        return bx > by
+      end
       local function pad_numbers(str)
         return str:gsub("%d+", function(n) return string.format("%010d", n) end)
       end
@@ -141,6 +158,8 @@ end
 local M = {}
 
 M.tag = 0
+M.get_sort_order = function() return sort_order end
+M.set_sort_order = function(v) sort_order = v end
 M.get_permissions = get_permissions
 M.perms_to_mode   = perms_to_mode
 
@@ -180,6 +199,13 @@ local columns = {
         local entry_data = ctx.get_entry_data(i)
         if entry_data then
           local name_hl = get_entry[3]
+          if entry_data.type == "directory" then
+            if name_hl == "FylerGitIgnored" then
+              name_hl = "FylerFSIgnored"
+            elseif name_hl == "FylerGitUntracked" then
+              name_hl = "FylerFSDirectoryName"
+            end
+          end
           highlights[i] = name_hl or ((entry_data.type == "directory") and "FylerFSDirectoryName" or nil)
         end
         table.insert(column, Text(nil, { virt_text = { { get_entry[1], get_entry[2] } }, virt_text_pos = "eol" }))
@@ -249,6 +275,27 @@ local columns = {
 
     _next({ column = column, highlights = highlights })
   end,
+
+  creation_time = function(ctx, _, _next)
+    local column = {}
+    for i = 1, #ctx.entries do
+      local text = ""
+      local path = ctx.get_entry_data(i).path
+      local stat = vim.uv.fs_stat(path)
+      if stat then
+        local t = _is_linux and stat.ctime or stat.birthtime
+        local dt = os.date("*t", t.sec)
+        text = string.format("%02d/%02d/%02d %02d:%02d",
+          dt.day, dt.month, dt.year % 100, dt.hour, dt.min)
+      end
+      table.insert(column, Text(nil, {
+        virt_text     = { { text, "FylerPermissions" } },
+        virt_text_pos = "eol",
+      }))
+    end
+
+    _next({ column = column, highlights = {} })
+  end,
 }
 
 local function collect_and_render_details(tag, context, files_column, oncollect)
@@ -284,7 +331,7 @@ local function collect_and_render_details(tag, context, files_column, oncollect)
       for index, highlight in pairs(all_highlights) do
         local row = files_column[index]
         if row and row.children then
-          local name_component = row.children[5]
+          local name_component = row.children[4]
           if name_component then
             name_component.option = name_component.option or {}
             name_component.option.highlight = highlight
@@ -372,10 +419,10 @@ M.files = Component.new_async(function(node, onupdate)
     local icon_text = Text(icon, { highlight = icon_highlight })
     local ref_id_text = item.ref_id and Text(string.format("/%05d ", item.ref_id)) or Text("")
     local perm_text = perm_enabled
-      and Text(get_permissions(item.link or item.path) .. " ", { highlight = "Comment", priority = 200 })
+      and Text("  " .. get_permissions(item.link or item.path), { highlight = "FylerPermissions", priority = 200 })
       or Text("")
-    local name_text = Text(item.name, { highlight = name_highlight })
-    table.insert(files_column, Row({ indentation_text, icon_text, ref_id_text, perm_text, name_text }))
+         local name_text = Text(item.name .. (item.type == "directory" and "/" or ""), { highlight = name_highlight })
+    table.insert(files_column, Row({ indentation_text, icon_text, ref_id_text, name_text, perm_text }))
   end
 
   -- First pass: render the file tree immediately so the buffer is populated
@@ -420,10 +467,10 @@ M.refresh_details = function(node, onupdate)
     local icon_text = Text(icon, { highlight = icon_highlight })
     local ref_id_text = item.ref_id and Text(string.format("/%05d ", item.ref_id)) or Text("")
     local perm_text = perm_enabled
-      and Text(get_permissions(item.link or item.path) .. " ", { highlight = "Comment", priority = 200 })
+      and Text("  " .. get_permissions(item.link or item.path), { highlight = "FylerPermissions", priority = 200 })
       or Text("")
-    local name_text = Text(item.name, { highlight = name_highlight })
-    table.insert(files_column, Row({ indentation_text, icon_text, ref_id_text, perm_text, name_text }))
+     local name_text = Text(item.name .. (item.type == "directory" and "/" or ""), { highlight = name_highlight })
+    table.insert(files_column, Row({ indentation_text, icon_text, ref_id_text, name_text, perm_text }))
   end
 
   collect_and_render_details(

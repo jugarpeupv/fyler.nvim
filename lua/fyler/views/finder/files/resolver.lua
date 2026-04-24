@@ -32,7 +32,7 @@ function Resolver:_parse_buffer()
   local parent_stack = require("fyler.lib.structs.stack").new()
   parent_stack:push({ node = parsed_tree, indent = -1 })
 
-  local buffer_lines = vim.api.nvim_buf_get_lines(self.files.finder.win.bufnr, 0, -1, false)
+  local buffer_lines = vim.api.nvim_buf_get_lines(self.files.finder.win.bufnr, 1, -1, false)
 
   for _, line in ipairs(util.filter_bl(buffer_lines)) do
     local entry_name = helper.parse_name(line)
@@ -52,8 +52,8 @@ function Resolver:_parse_buffer()
     if perm_enabled and entry_ref_id and not entry_perms then
       local after_ref = line:match("/%d+ (.*)$") or ""
       error(string.format(
-        "Invalid permission string %q – expected 9 chars (rwxrwxrwx) followed by a space",
-        after_ref:sub(1, 10)
+        "Invalid permission string in %q – expected 9 chars (rwxrwxrwx) at end of line after two spaces",
+        after_ref
       ))
     end
 

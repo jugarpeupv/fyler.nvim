@@ -179,7 +179,7 @@ function config.defaults()
         -- Move to trash instead of permanent delete
         delete_to_trash = false,
         -- Define order of information columns
-        columns_order = { "link", "permission", "size", "git", "diagnostic" },
+        columns_order = { "link", "permission", "size", "git", "diagnostic", "creation_time" },
         -- Define configuration fo each available information column
         columns = {
           git = {
@@ -213,6 +213,9 @@ function config.defaults()
           size = {
             enabled = true,
           },
+          creation_time = {
+            enabled = true,
+          },
         },
         -- Overrides directory icons for vairous state
         icon = {
@@ -240,6 +243,7 @@ function config.defaults()
           ["."] = "GotoNode",
           ["#"] = "CollapseAll",
           ["<BS>"] = "CollapseNode",
+          ["gC"] = "SortByCreationTime",
         },
         -- Defines key mapping options
         mappings_opts = {

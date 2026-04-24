@@ -23,6 +23,7 @@ local util = require("fyler.lib.util")
 ---@field enter boolean
 ---@field footer string|string[]|nil
 ---@field footer_pos string|nil
+---@field header string|nil
 ---@field height string
 ---@field kind WinKind
 ---@field left integer|string|nil
@@ -117,6 +118,25 @@ function Win:set_lines(start, finish, lines)
 
   self:set_local_buf_option("modified", false)
   self:set_local_buf_option("undolevels", undolevels)
+end
+
+---Write (or overwrite) only line 0 of the buffer with `text`, leaving the
+---rest of the buffer intact. Used by change_root to update the path header
+---without triggering a full re-render.
+---@param text string
+function Win:set_header(text)
+  if not self:has_valid_bufnr() then return end
+  self.header = text
+
+  local was_modifiable = util.get_buf_option(self.bufnr, "modifiable")
+  local undolevels     = util.get_buf_option(self.bufnr, "undolevels")
+
+  self:set_local_buf_option("modifiable", true)
+  self:set_local_buf_option("undolevels", -1)
+  vim.api.nvim_buf_set_lines(self.bufnr, 0, 1, false, { text })
+  self:set_local_buf_option("modified", false)
+  self:set_local_buf_option("undolevels", undolevels)
+  if not was_modifiable then self:set_local_buf_option("modifiable", false) end
 end
 
 function Win:clear_extmarks()

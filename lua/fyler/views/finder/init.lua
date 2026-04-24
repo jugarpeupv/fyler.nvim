@@ -89,19 +89,28 @@ function Finder:open(kind)
       ["BufWriteCmd"] = function()
         self:dispatch_mutation()
       end,
-      [{"CursorMoved","CursorMovedI"}] = function()
-        local cur = vim.api.nvim_get_current_line()
-        local ref_id = helper.parse_ref_id(cur)
-        if not ref_id then return end
+      [{"CursorMoved","CursorMovedI"}] = (function()
+        local _busy = false
+        return function()
+          if _busy then return end
+          local cur = vim.api.nvim_get_current_line()
+          local ref_id = helper.parse_ref_id(cur)
+          if not ref_id then return end
 
-        local _, ub = string.find(cur, ref_id)
-        if not self.win:has_valid_winid() then return end
+          local _, ub = string.find(cur, string.format("/%05d ", ref_id))
+          if not ub then return end
+          if not self.win:has_valid_winid() then return end
 
-        local row, col = self.win:get_cursor()
-        if not (row and col) then return end
+          local row, col = self.win:get_cursor()
+          if not (row and col) then return end
 
-        if col <= ub then self.win:set_cursor(row, ub + 1) end
-      end,
+          if col <= ub then
+            _busy = true
+            self.win:set_cursor(row, ub + 1)
+            _busy = false
+          end
+        end
+      end)(),
     },
     border        = view_cfg.win.border,
     bufname       = self.uri,
@@ -126,15 +135,42 @@ function Finder:open(kind)
       [rev_maps["SelectVSplit"]]       = self:action "n_select_v_split",
       [rev_maps["TogglePermissions"]]  = self:action "n_toggle_permission",
       [rev_maps["PasteEntry"]]         = self:action "n_paste",
+      [rev_maps["SortByCreationTime"]] = self:action "n_sort_creation_time",
     },
     mappings_opts = view_cfg.mappings_opts,
     on_show       = function()
       self.watcher:enable()
       indent.attach(self.win)
+
+      -- Set the editable path header (line 1 of the buffer)
+      self.win.header = vim.fn.fnamemodify(self:getcwd(), ":~")
+
+      local bufnr = self.win.bufnr
+      local mopts = vim.tbl_extend("force", view_cfg.mappings_opts or {}, { buffer = bufnr })
+
+      -- <CR> on the header line: read the text, resolve it and change root.
+      -- On any other line, <CR> is not mapped (falls through to default).
+      vim.keymap.set("n", "<CR>", function()
+        if not self.win:has_valid_bufnr() then return end
+        local row = vim.api.nvim_win_get_cursor(self.win.winid or 0)[1]
+        if row ~= 1 then return end
+
+        local text = vim.trim(vim.api.nvim_buf_get_lines(bufnr, 0, 1, false)[1] or "")
+        local path = vim.fn.expand(text)
+        path = vim.fn.fnamemodify(path, ":p"):gsub("/$", "")
+
+        if vim.fn.isdirectory(path) == 0 then
+          vim.notify("[Fyler] Not a directory: " .. text, vim.log.levels.WARN)
+          self.win:set_header(vim.fn.fnamemodify(self:getcwd(), ":~"))
+          return
+        end
+
+        self:change_root(path):dispatch_refresh({ force_update = true })
+      end, mopts)
+
       -- Visual-mode actions: registered as "x" so they capture the line range
       -- from the visual selection. Cannot go through the normal mappings table
       -- which is hardcoded to "n" mode.
-      local mopts = vim.tbl_extend("force", view_cfg.mappings_opts or {}, { buffer = self.win.bufnr })
       local v_maps = {
         VisualYankEntries = self:action("v_yank"),
         VisualCutEntries  = self:action("v_cut"),
@@ -230,7 +266,8 @@ function Finder:change_root(path)
   
   -- Update the window title
   if self.win then 
-    self.win:update_title(string.format(" %s ", Path.new(path):os_path())) 
+    self.win:update_title(string.format(" %s ", Path.new(path):os_path()))
+    self.win:set_header(vim.fn.fnamemodify(Path.new(path):os_path(), ":~"))
   end
   
   -- Update global CWD for display purposes (winbar, etc.)

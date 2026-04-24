@@ -75,15 +75,17 @@ function M.setup()
     FylerRed             = { fg = palette.red },
     FylerYellow          = { fg = palette.yellow },
 
-    FylerFSDirectoryIcon = { fg = palette.blue },
-    FylerFSDirectoryName = { fg = palette.fg },
-    FylerFSFile          = { fg = palette.white },
-    FylerFSLink          = { fg = palette.grey },
+    FylerFSDirectoryIcon    = { fg = palette.blue },
+    FylerFSDirectoryName    = { fg = palette.fg },
+    FylerFSDirectoryIgnored = { link = "FylerFSIgnored" },
+    FylerFSFile             = { fg = palette.white },
+    FylerFSIgnored          = { fg = palette.grey },
+    FylerFSLink             = { fg = palette.grey },
 
     FylerGitConflict     = { fg = palette.red },
     FylerGitCopied       = { fg = palette.yellow },
     FylerGitDeleted      = { fg = palette.red },
-    FylerGitIgnored      = { fg = palette.grey },
+    FylerGitIgnored      = { link = "FylerFSIgnored" },
     FylerGitModified     = { fg = palette.yellow },
     FylerGitRenamed      = { fg = palette.yellow },
     FylerGitStaged       = { fg = palette.green },
@@ -100,7 +102,7 @@ function M.setup()
     FylerGitIconUnstaged  = { link = "FylerGitUnstaged" },
     FylerGitIconUntracked = { link = "FylerGitUntracked" },
 
-    FylerPermissions     = { link = "Comment" },
+    FylerPermissions     = { fg = "#7C7F93" },
 
     FylerWinPick         = { fg = palette.white, bg = palette.blue },
 

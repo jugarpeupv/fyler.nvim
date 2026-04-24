@@ -350,6 +350,18 @@ function M.n_toggle_permission(self)
   end
 end
 
+function M.n_sort_creation_time(self)
+  return function()
+    local ui = require("fyler.views.finder.ui")
+    if ui.get_sort_order() == "creation_time" then
+      ui.set_sort_order("name")
+    else
+      ui.set_sort_order("creation_time")
+    end
+    self:dispatch_refresh({ force_update = true })
+  end
+end
+
 -- ---------------------------------------------------------------------------
 -- Clipboard: visual yank / visual cut / paste
 -- ---------------------------------------------------------------------------
