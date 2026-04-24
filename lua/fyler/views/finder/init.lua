@@ -127,6 +127,7 @@ function Finder:open(kind)
       [rev_maps["CollapseAll"]]        = self:action "n_collapse_all",
       [rev_maps["CollapseNode"]]       = self:action "n_collapse_node",
       [rev_maps["GotoCwd"]]            = self:action "n_goto_cwd",
+      [rev_maps["GotoCwdOriginal"]]    = self:action "n_goto_cwd_original",
       [rev_maps["GotoNode"]]           = self:action "n_goto_node",
       [rev_maps["GotoParent"]]         = self:action "n_goto_parent",
       [rev_maps["Select"]]             = self:action "n_select",

@@ -49,6 +49,7 @@ local DEPRECATION_RULES = {
 ---@alias FylerConfigFinderMapping
 ---| "CloseView"
 ---| "GotoCwd"
+---| "GotoCwdOriginal"
 ---| "GotoNode"
 ---| "GotoParent"
 ---| "Select"

@@ -238,9 +238,16 @@ end
 ---@param self Finder
 function M.n_goto_cwd(self)
   return function()
+    local pwd = vim.fn.fnamemodify(vim.fn.getcwd(), ":p"):gsub("/$", "")
+    if self:getcwd() == pwd then return end
+    self:change_root(pwd):dispatch_refresh({ force_update = true })
+  end
+end
+
+---@param self Finder
+function M.n_goto_cwd_original(self)
+  return function()
     if self:getrwd() == self:getcwd() then return end
-    
-    -- Navigate within the tree (don't change tree root)
     self:change_root(self:getrwd()):dispatch_refresh({ force_update = true })
   end
 end
