@@ -231,6 +231,8 @@ function Watcher:stop(dir)
 
   if not config.values.views.finder.watcher.enabled then return self end
 
+  if not self.paths[dir] then return end
+
   if self.paths[dir].running then self.paths[dir].fsevent:stop() end
 
   self.paths[dir].running = false

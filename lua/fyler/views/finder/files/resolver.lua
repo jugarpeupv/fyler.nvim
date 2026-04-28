@@ -34,7 +34,12 @@ function Resolver:_parse_buffer()
 
   local buffer_lines = vim.api.nvim_buf_get_lines(self.files.finder.win.bufnr, 1, -1, false)
 
-  for _, line in ipairs(util.filter_bl(buffer_lines)) do
+  for i, line in ipairs(util.filter_bl(buffer_lines)) do
+    -- Line index 1 (first entry after the header) is always the decorative "../"
+    -- parent-navigation row. It carries no ref_id and must never produce a
+    -- filesystem action, regardless of what icon text precedes the "../" string.
+    if i == 1 then goto continue end
+
     local entry_name = helper.parse_name(line)
     local entry_ref_id = helper.parse_ref_id(line)
     local entry_indent = helper.parse_indent_level(line)
@@ -78,6 +83,8 @@ function Resolver:_parse_buffer()
     table.insert(current_parent.node.children, child_node)
 
     parent_stack:push({ node = child_node, indent = entry_indent })
+
+    ::continue::
   end
 
   return parsed_tree
@@ -165,6 +172,24 @@ function Resolver:_generate_actions(parsed_tree)
 
   for ref_id, original_path in pairs(old_ref) do
     insert_action(ref_id, original_path)
+  end
+
+  -- Handle ref_ids that appear in the buffer but are NOT in this instance's trie.
+  -- This happens when the user copies a line from another fyler instance and pastes
+  -- it here (oil-style cross-instance copy by buffer editing). We resolve the
+  -- original path via the global manager and emit copy actions for each destination.
+  for ref_id, dst_entries in pairs(new_ref) do
+    if not old_ref[ref_id] then
+      local src_entry = manager.get(ref_id)
+      if src_entry then
+        local src_path = src_entry.link or src_entry.path
+        for _, dst_entry in ipairs(dst_entries) do
+          if dst_entry.path ~= src_path then
+            table.insert(actions, { type = "copy", src = src_path, dst = dst_entry.path })
+          end
+        end
+      end
+    end
   end
 
   return actions

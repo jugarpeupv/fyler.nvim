@@ -1,6 +1,6 @@
 local M = {}
 
-M.PREFIX = "fyler://"
+M.PREFIX = "fyler-clipboard://"
 
 ---Serialise paths and action into the + (system) clipboard register.
 ---@param finder Finder

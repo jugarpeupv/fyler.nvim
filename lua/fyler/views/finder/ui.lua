@@ -329,7 +329,8 @@ local function collect_and_render_details(tag, context, files_column, oncollect)
       end
 
       for index, highlight in pairs(all_highlights) do
-        local row = files_column[index]
+        -- +1 because files_column[1] is the "../" navigation row; real entries start at index 2.
+        local row = files_column[index + 1]
         if row and row.children then
           local name_component = row.children[4]
           if name_component then
@@ -371,6 +372,10 @@ local function collect_and_render_details(tag, context, files_column, oncollect)
             end
           end
 
+          -- Prepend a blank row to align with the "../" navigation line in files_column.
+          local blank = Text(nil, { virt_text = { { "" } } })
+          table.insert(result.column, 1, blank)
+
           table.insert(detail_columns, Column(result.column))
         end
       end
@@ -404,6 +409,19 @@ M.files = Component.new_async(function(node, onupdate)
     and config.values.views.finder.columns.permission.enabled
 
   local files_column = {}
+  -- Always prepend the parent-directory navigation entry. This line is purely
+  -- decorative/navigational and carries no ref_id so the resolver ignores it.
+  do
+    local parent_icon, _ = config.icon_provider("directory", "..")
+    local icons = config.values.views.finder.icon
+    parent_icon = icons.directory_collapsed or parent_icon or ""
+    local parent_icon_str = (parent_icon ~= "") and (parent_icon .. "  ") or ""
+    table.insert(files_column, Row({
+      Text(parent_icon_str, { highlight = "FylerFSDirectoryIcon" }),
+      Text("../", { highlight = "FylerFSDirectoryName" }),
+    }))
+  end
+
   for _, entry in ipairs(flattened_entries) do
     local item, depth = entry.item, entry.depth
     local icon, hl = icon_and_hl(item)
@@ -456,6 +474,18 @@ M.refresh_details = function(node, onupdate)
     and config.values.views.finder.columns.permission.enabled
 
   local files_column = {}
+  -- Prepend the parent-directory entry to keep indices aligned with Pass 1.
+  do
+    local parent_icon, _ = config.icon_provider("directory", "..")
+    local icons = config.values.views.finder.icon
+    parent_icon = icons.directory_collapsed or parent_icon or ""
+    local parent_icon_str = (parent_icon ~= "") and (parent_icon .. "  ") or ""
+    table.insert(files_column, Row({
+      Text(parent_icon_str, { highlight = "FylerFSDirectoryIcon" }),
+      Text("../", { highlight = "FylerFSDirectoryName" }),
+    }))
+  end
+
   for _, entry in ipairs(flattened_entries) do
     local item, depth = entry.item, entry.depth
     local icon, hl = icon_and_hl(item)

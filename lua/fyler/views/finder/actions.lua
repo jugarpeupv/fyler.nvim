@@ -19,6 +19,16 @@ end
 local function _select(self, opener, opts)
   opts = vim.tbl_extend("force", { winpick = true }, opts or {})
 
+  -- Line 2 (vim line number) is always the "../" parent-directory navigation entry.
+  -- Pressing <CR> on it navigates up one directory, matching netrw behaviour.
+  if vim.fn.line(".") == 2 then
+    local parent_dir = Path.new(self:getcwd()):parent():posix_path()
+    if parent_dir ~= self:getcwd() then
+      self:change_root(parent_dir):dispatch_refresh({ force_update = true })
+    end
+    return
+  end
+
   local ref_id = helper.parse_ref_id(vim.api.nvim_get_current_line())
   if not ref_id then return end
 
@@ -369,6 +379,66 @@ function M.n_sort_creation_time(self)
   end
 end
 
+---@param self Finder
+function M.n_open_secondary_vsplit(_self)
+  return function()
+    local finder_mod = require("fyler.views.finder")
+
+    -- Find the first non-fyler, non-floating editor window.
+    local editor_win = nil
+    for _, wid in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+      if vim.api.nvim_win_is_valid(wid) then
+        local cfg = vim.api.nvim_win_get_config(wid)
+        local ft  = vim.bo[vim.api.nvim_win_get_buf(wid)].filetype
+        if cfg.relative == "" and ft ~= "fyler" then
+          editor_win = wid
+          break
+        end
+      end
+    end
+
+    -- vsplit the editor window (or current window as fallback), then open
+    -- the secondary finder into the new split with replace kind so it sits
+    -- exactly in that half of the editor area.
+    local target_win
+    if editor_win then
+      vim.api.nvim_set_current_win(editor_win)
+    end
+    vim.cmd("vsplit")
+    target_win = vim.api.nvim_get_current_win()
+
+    finder_mod.open_secondary_in_win(target_win)
+  end
+end
+
+---@param self Finder
+function M.n_open_secondary_split(_self)
+  return function()
+    local finder_mod = require("fyler.views.finder")
+
+    -- Find the first non-fyler, non-floating editor window.
+    local editor_win = nil
+    for _, wid in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+      if vim.api.nvim_win_is_valid(wid) then
+        local cfg = vim.api.nvim_win_get_config(wid)
+        local ft  = vim.bo[vim.api.nvim_win_get_buf(wid)].filetype
+        if cfg.relative == "" and ft ~= "fyler" then
+          editor_win = wid
+          break
+        end
+      end
+    end
+
+    if editor_win then
+      vim.api.nvim_set_current_win(editor_win)
+    end
+    vim.cmd("split")
+    local target_win = vim.api.nvim_get_current_win()
+
+    finder_mod.open_secondary_in_win(target_win)
+  end
+end
+
 -- ---------------------------------------------------------------------------
 -- Clipboard: visual yank / visual cut / paste
 -- ---------------------------------------------------------------------------
@@ -385,6 +455,17 @@ local function v_collect(self, action)
   local anch  = vim.fn.line("v")
   local first = math.min(cur, anch)
   local last  = math.max(cur, anch)
+
+  -- Lines 1 (cwd header) and 2 ("../") are not file entries. If the selection
+  -- touches either of them, fall back to a plain yank and do nothing fyler-specific.
+  if first <= 2 then
+    -- Let Neovim handle the yank natively: feed <Esc> to finalise the visual
+    -- selection marks ('<,'>), then gvy to reselect and yank into unnamed register.
+    local keys = vim.api.nvim_replace_termcodes("<Esc>gvy", true, false, true)
+    vim.api.nvim_feedkeys(keys, "nx", false)
+    return
+  end
+
   local lines = vim.api.nvim_buf_get_lines(self.win.bufnr, first - 1, last, false)
 
   local clipboard = require("fyler.views.finder.clipboard")
@@ -502,10 +583,31 @@ function M.n_paste(self)
       spinner:stop()
 
       clipboard.clear(self)
-      self:dispatch_refresh({ force_update = true })
+
+      -- Refresh every open fyler instance whose root is at or above the paste
+      -- destination, so that any visible instance (e.g. the original when pasting
+      -- from a secondary) immediately shows the new files.
+      local dsts = vim.tbl_map(function(op) return op.dst end, operations)
+      local finder_mod = require("fyler.views.finder")
+      vim.schedule(function()
+        for inst in finder_mod.iter_instances() do
+          if inst and inst:isopen() then
+            local inst_cwd = inst:getcwd()
+            local should_refresh = false
+            for _, dst in ipairs(dsts) do
+              if dst:sub(1, #inst_cwd) == inst_cwd then
+                should_refresh = true
+                break
+              end
+            end
+            if should_refresh then
+              inst:dispatch_refresh({ force_update = true })
+            end
+          end
+        end
+      end)
 
       -- Report full destination paths
-      local dsts = vim.tbl_map(function(op) return op.dst end, operations)
       vim.schedule(function()
         vim.notify(
           string.format("[Fyler] Pasted %d file(s):\n%s", #dsts, table.concat(dsts, "\n")),

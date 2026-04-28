@@ -61,6 +61,8 @@ local DEPRECATION_RULES = {
 ---| "SetCwdHere"
 ---| "SetCwdToParent"
 ---| "SetCwdToNode"
+---| "OpenSecondaryVSplit"
+---| "OpenSecondaryHSplit"
 
 ---@class FylerConfigIndentScope
 ---@field enabled boolean
@@ -245,6 +247,8 @@ function config.defaults()
           ["#"] = "CollapseAll",
           ["<BS>"] = "CollapseNode",
           ["gC"] = "SortByCreationTime",
+          ["gv"] = "OpenSecondaryVSplit",
+          ["gs"] = "OpenSecondaryHSplit",
         },
         -- Defines key mapping options
         mappings_opts = {
@@ -262,7 +266,7 @@ function config.defaults()
           border = vim.o.winborder == "" and "single" or vim.o.winborder,
           buf_opts = {
             bufhidden = "hide",
-            buflisted = false,
+            buflisted = true,
             buftype = "acwrite",
             expandtab = true,
             filetype = "fyler",
@@ -270,8 +274,14 @@ function config.defaults()
             syntax = "fyler",
             swapfile = false,
           },
-          kind = "replace",
+          kind = "sidebar",
           kinds = {
+            sidebar = {
+              width = 35,
+              win_opts = {
+                winfixwidth = true,
+              },
+            },
             float = {
               height = "70%",
               width = "70%",

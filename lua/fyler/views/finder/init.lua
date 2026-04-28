@@ -10,6 +10,12 @@ local M = {}
 -- Global CWD tracking for Fyler (initialized when finder is created)
 local global_cwd = nil
 
+-- Instance registry: slot (integer) → Finder object.
+-- Declared here so all Finder methods defined below can close over it.
+local MAX_INSTANCES = 2
+local ORIG_SLOT     = 1
+local instances     = {}
+
 ---Internal helper to update global CWD during navigation (for winbar sync)
 ---@param path string
 local function update_global_cwd(path)
@@ -25,9 +31,9 @@ end
 local Finder = {}
 Finder.__index = Finder
 
-function Finder.new(uri) 
-  local rwd = helper.parse_protocol_uri(uri)
-  return setmetatable({ uri = uri, rwd = rwd }, Finder) 
+function Finder.new(uri, slot)
+  local rwd, _ = helper.parse_protocol_uri(uri)
+  return setmetatable({ uri = uri, rwd = rwd, slot = slot or 1 }, Finder)
 end
 
 ---@param name string
@@ -104,9 +110,11 @@ function Finder:open(kind)
           local row, col = self.win:get_cursor()
           if not (row and col) then return end
 
-          if col <= ub then
+          -- ub is 1-indexed (from string.find); col is 0-indexed (from nvim_win_get_cursor).
+          -- The first editable character is at 0-indexed column `ub` (i.e. 1-indexed `ub + 1`).
+          if col < ub then
             _busy = true
-            self.win:set_cursor(row, ub + 1)
+            self.win:set_cursor(row, ub)
             _busy = false
           end
         end
@@ -134,9 +142,12 @@ function Finder:open(kind)
       [rev_maps["SelectSplit"]]        = self:action "n_select_split",
       [rev_maps["SelectTab"]]          = self:action "n_select_tab",
       [rev_maps["SelectVSplit"]]       = self:action "n_select_v_split",
-      [rev_maps["TogglePermissions"]]  = self:action "n_toggle_permission",
-      [rev_maps["PasteEntry"]]         = self:action "n_paste",
-      [rev_maps["SortByCreationTime"]] = self:action "n_sort_creation_time",
+      [rev_maps["TogglePermissions"]]       = self:action "n_toggle_permission",
+      [rev_maps["PasteEntry"]]              = self:action "n_paste",
+      [rev_maps["SortByCreationTime"]]      = self:action "n_sort_creation_time",
+      [rev_maps["GotoCwdOriginal"]]         = self:action "n_goto_cwd_original",
+      [rev_maps["OpenSecondaryVSplit"]]     = self:action "n_open_secondary_vsplit",
+      [rev_maps["OpenSecondaryHSplit"]]     = self:action "n_open_secondary_split",
     },
     mappings_opts = view_cfg.mappings_opts,
     on_show       = function()
@@ -222,6 +233,22 @@ function Finder:open(kind)
   -- stylua: ignore end
 
   self.win:show()
+
+  -- Free the instance slot when the window is closed by any means (:q, ZZ, etc.)
+  -- so that next_secondary_slot() correctly sees the slot as available.
+  if self.slot ~= ORIG_SLOT and self.win:has_valid_winid() then
+    local winid = self.win.winid
+    local slot  = self.slot
+    vim.api.nvim_create_autocmd("WinClosed", {
+      pattern  = tostring(winid),
+      once     = true,
+      callback = function()
+        if instances[slot] and instances[slot].win and instances[slot].win.winid == winid then
+          instances[slot] = nil
+        end
+      end,
+    })
+  end
 end
 
 ---@return string
@@ -242,6 +269,10 @@ end
 function Finder:close()
   require("fyler.views.finder.clipboard").clear(self)
   if self.win then self.win:hide() end
+  -- Free the slot so it can be reused by the next secondary
+  if self.slot and self.slot ~= 1 then
+    instances[self.slot] = nil
+  end
 end
 
 function Finder:navigate(...) self.files:navigate(...) end
@@ -263,7 +294,7 @@ function Finder:change_root(path)
 
   -- Update the finder's URI to match the new path (but don't change buffer name)
   local normalized_path = vim.fn.fnamemodify(Path.new(path):posix_path(), ":p"):gsub("/$", "")
-  self.uri = helper.build_protocol_uri(normalized_path)
+  self.uri = helper.build_protocol_uri(normalized_path, self.slot)
   
   -- Update the window title
   if self.win then 
@@ -400,13 +431,71 @@ function Finder:dispatch_mutation()
   end)
 end
 
--- Single global finder instance
-local current_finder = nil
+---Allocate the next available secondary slot (lowest recycled or next integer, max MAX_INSTANCES).
+---Returns nil when the cap is already reached.
+---@return integer|nil
+local function next_secondary_slot()
+  for slot = 2, MAX_INSTANCES do
+    if not instances[slot] then return slot end
+  end
+  return nil
+end
 
----Get the global current working directory for Fyler
----@return string
-function M.get_current_dir() 
-  return global_cwd or vim.fn.getcwd()
+---Get or create the finder instance for the given slot.
+---@param slot integer|nil  defaults to ORIG_SLOT
+---@return Finder
+function M.instance(slot)
+  slot = slot or ORIG_SLOT
+  if instances[slot] then return instances[slot] end
+
+  -- Initialize global_cwd on first-ever instance creation
+  if not global_cwd then
+    global_cwd = vim.fn.fnamemodify(vim.fn.getcwd(), ":p"):gsub("/$", "")
+  end
+
+  -- Secondaries start at the original instance's current directory
+  local path = (slot == ORIG_SLOT or not instances[ORIG_SLOT])
+    and global_cwd
+    or instances[ORIG_SLOT]:getcwd()
+
+  local uri = helper.build_protocol_uri(path, slot)
+
+  local finder = Finder.new(uri, slot)
+  finder.watcher = require("fyler.views.finder.watcher").new(finder)
+  finder.files = require("fyler.views.finder.files").new({
+    open = true,
+    name = Path.new(path):basename(),
+    path = Path.new(path):posix_path(),
+    finder = finder,
+  })
+
+  instances[slot] = finder
+  return finder
+end
+
+---Open a secondary instance in a split. kind must be "split_right" or "split_below".
+---Respects the MAX_INSTANCES cap and recycles freed slots.
+---@param kind WinKind
+function M.open_secondary(kind)
+  local slot = next_secondary_slot()
+  if not slot then
+    vim.notify("[Fyler] Maximum number of instances (" .. MAX_INSTANCES .. ") already open.", vim.log.levels.WARN)
+    return
+  end
+  M.instance(slot):open(kind)
+end
+
+---Open a secondary instance into an existing window (replace kind).
+---The caller is responsible for creating/focusing the target window first.
+---@param winid integer  the window to open the secondary finder into
+function M.open_secondary_in_win(winid)
+  local slot = next_secondary_slot()
+  if not slot then
+    vim.notify("[Fyler] Maximum number of instances (" .. MAX_INSTANCES .. ") already open.", vim.log.levels.WARN)
+    return
+  end
+  vim.api.nvim_set_current_win(winid)
+  M.instance(slot):open("replace")
 end
 
 ---Set the global current working directory for Fyler and navigate to it
@@ -422,8 +511,8 @@ function M.set_current_dir(path)
   -- Update global CWD
   global_cwd = normalized_path
   
-  -- Get the finder instance
-  local finder = M.instance()
+  -- Get the original finder instance
+  local finder = M.instance(ORIG_SLOT)
   
   -- Recreate the Files instance with the new root path
   if finder and finder.files then
@@ -440,8 +529,8 @@ function M.set_current_dir(path)
       finder = finder,
     })
     
-    -- Update the finder's URI to match the new path
-    finder.uri = helper.build_protocol_uri(normalized_path)
+    -- Update the finder's URI to match the new path (preserving slot)
+    finder.uri = helper.build_protocol_uri(normalized_path, ORIG_SLOT)
     
     -- Update the window buffer name to match new URI
     if finder.win and finder.win.bufnr and vim.api.nvim_buf_is_valid(finder.win.bufnr) then
@@ -461,40 +550,13 @@ function M.set_current_dir(path)
   end)
 end
 
----Get or create the single global finder instance
----@return Finder
-function M.instance()
-  if current_finder then return current_finder end
-
-  -- Initialize global_cwd on first instance creation if not already set
-  if not global_cwd then
-    global_cwd = vim.fn.fnamemodify(vim.fn.getcwd(), ":p"):gsub("/$", "")
-  end
-
-  -- Use global_cwd as the initial path
-  local path = global_cwd
-  local uri = helper.build_protocol_uri(path)
-
-  local finder = Finder.new(uri)
-  finder.watcher = require("fyler.views.finder.watcher").new(finder)
-  finder.files = require("fyler.views.finder.files").new({
-    open = true,
-    name = Path.new(path):basename(),
-    path = Path.new(path):posix_path(),
-    finder = finder,
-  })
-
-  current_finder = finder
-  return current_finder
-end
-
 ---@param kind WinKind|nil
 function M.open(kind) 
-  M.instance():open(kind or config.values.views.finder.win.kind) 
+  M.instance(ORIG_SLOT):open(kind or config.values.views.finder.win.kind) 
 end
 
 M.close = vim.schedule_wrap(function()
-  local finder = M.instance()
+  local finder = instances[ORIG_SLOT]
   if finder and finder:isopen() then
     finder:close()
   end
@@ -502,7 +564,7 @@ end)
 
 ---@param kind WinKind|nil
 M.toggle = vim.schedule_wrap(function(kind)
-  local finder = M.instance()
+  local finder = M.instance(ORIG_SLOT)
   if finder:isopen(kind) then
     finder:close()
   else
@@ -511,7 +573,7 @@ M.toggle = vim.schedule_wrap(function(kind)
 end)
 
 M.focus = vim.schedule_wrap(function()
-  local finder = M.instance()
+  local finder = instances[ORIG_SLOT]
   if finder and finder.win then
     finder.win:focus()
   end
@@ -522,7 +584,8 @@ end)
 M.navigate = vim.schedule_wrap(function(path, opts)
   opts = opts or {}
 
-  local finder = M.instance()
+  local finder = instances[ORIG_SLOT]
+  if not finder then return end
   
   if not finder:isopen() then return end
 
@@ -554,5 +617,16 @@ M.navigate = vim.schedule_wrap(function(path, opts)
     finder:dispatch_refresh(opts)
   end)
 end)
+
+---Iterate all currently open Finder instances.
+---@return fun(): Finder|nil
+function M.iter_instances()
+  local keys = vim.tbl_keys(instances)
+  local i = 0
+  return function()
+    i = i + 1
+    return instances[keys[i]]
+  end
+end
 
 return M

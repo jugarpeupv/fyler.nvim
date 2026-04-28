@@ -3,6 +3,7 @@ local util = require("fyler.lib.util")
 ---@alias WinKind
 ---| "float"
 ---| "replace"
+---| "sidebar"
 ---| "split_above"
 ---| "split_above_all"
 ---| "split_below"
@@ -197,6 +198,11 @@ function Win:config()
 
   if self.kind:match("^split_") then
     winconfig.split = self.kind:match("^split_(.*)")
+  elseif self.kind == "sidebar" then
+    -- sidebar is always a leftmost vertical split with a fixed column width.
+    -- We return split="left" here only to carry the width; Win:show() handles
+    -- the actual :topleft command.
+    winconfig.split = "sidebar"
   elseif self.kind:match("^replace") then
     return winconfig
   elseif self.kind:match("^float") then
@@ -277,8 +283,10 @@ function Win:show()
   self.origin_win = vim.api.nvim_get_current_win()
 
   local win_config = self:config()
-  if win_config.split and (win_config.split:match("_all$") or win_config.split:match("_most$")) then
-    if win_config.split == "left_most" then
+  if win_config.split and (win_config.split == "sidebar" or win_config.split:match("_all$") or win_config.split:match("_most$")) then
+    if win_config.split == "sidebar" then
+      vim.api.nvim_command(string.format("topleft %dvsplit", win_config.width or 35))
+    elseif win_config.split == "left_most" then
       vim.api.nvim_command(string.format("topleft %dvsplit", win_config.width))
     elseif win_config.split == "above_all" then
       vim.api.nvim_command(string.format("topleft %dsplit", win_config.height))

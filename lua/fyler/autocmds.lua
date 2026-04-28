@@ -44,7 +44,8 @@ function M.setup(config)
       callback = function(args)
         local bufname = vim.api.nvim_buf_get_name(args.buf)
         if helper.is_protocol_uri(bufname) then
-          local finder_instance = require("fyler.views.finder").instance(bufname)
+          local _, slot = helper.parse_protocol_uri(bufname)
+          local finder_instance = require("fyler.views.finder").instance(slot)
           if not finder_instance:isopen() then vim.schedule_wrap(fyler.open)({ dir = bufname }) end
         end
       end,
@@ -72,34 +73,45 @@ function M.setup(config)
     })
   end
 
-  -- Prevent foreign buffers from taking over the fyler window.
-  -- When any buffer is loaded into the fyler window (via gf, :e, LSP go-to-def,
-  -- etc.) we immediately restore the fyler buffer in that window and open the
-  -- file in a proper editor window instead.
+  -- Prevent foreign buffers from taking over any fyler window (original or secondary).
+  -- When any buffer is loaded into a fyler window (via gf, :e, LSP go-to-def, etc.)
+  -- we immediately restore that fyler buffer in its window and open the file in a
+  -- proper editor window instead.
   vim.api.nvim_create_autocmd("BufEnter", {
     group = augroup,
     pattern = "*",
-    desc = "Prevent foreign buffers from opening inside the fyler window",
+    desc = "Prevent foreign buffers from opening inside any fyler window",
     callback = function(args)
       -- Only act on real, named, non-fyler buffers
       if util.get_buf_option(args.buf, "filetype") == "fyler" then return end
       local bufname = vim.api.nvim_buf_get_name(args.buf)
       if bufname == "" or helper.is_protocol_uri(bufname) then return end
 
-      local finder = require("fyler.views.finder")
-      local finder_instance = finder.instance and finder.instance()
-      if not finder_instance or not finder_instance:isopen() then return end
+      local finder_mod = require("fyler.views.finder")
+      local current_win = vim.api.nvim_get_current_win()
 
-      local fyler_winid = finder_instance.win and finder_instance.win.winid
-      local fyler_bufnr = finder_instance.win and finder_instance.win.bufnr
-      if not fyler_winid or not vim.api.nvim_win_is_valid(fyler_winid) then return end
-      if vim.api.nvim_get_current_win() ~= fyler_winid then return end
+      -- Find the fyler instance (if any) whose window is the current window
+      local matched_instance = nil
+      for inst in finder_mod.iter_instances() do
+        if inst and inst:isopen() then
+          local fyler_winid = inst.win and inst.win.winid
+          if fyler_winid and vim.api.nvim_win_is_valid(fyler_winid) and current_win == fyler_winid then
+            matched_instance = inst
+            break
+          end
+        end
+      end
 
-      -- A foreign buffer has entered the fyler window. Redirect it.
+      if not matched_instance then return end
+
+      local fyler_winid = matched_instance.win.winid
+      local fyler_bufnr = matched_instance.win.bufnr
+
+      -- A foreign buffer has entered a fyler window. Redirect it.
       vim.schedule(function()
-        -- Safety checks: still in fyler window and finder is still open
+        -- Safety checks
         if not vim.api.nvim_win_is_valid(fyler_winid) then return end
-        if not finder_instance:isopen() then return end
+        if not matched_instance:isopen() then return end
         if vim.api.nvim_get_current_win() ~= fyler_winid then return end
 
         -- Restore the fyler buffer in its window
@@ -107,14 +119,20 @@ function M.setup(config)
           vim.api.nvim_win_set_buf(fyler_winid, fyler_bufnr)
         end
 
-        -- Find an existing editor window (any window that is not the fyler window)
+        -- Find an existing editor window (any non-fyler, non-floating window)
         local tabpage = vim.api.nvim_get_current_tabpage()
         local wins = vim.api.nvim_tabpage_list_wins(tabpage)
+        local all_fyler_winids = {}
+        for inst in finder_mod.iter_instances() do
+          if inst and inst.win and inst.win.winid then
+            all_fyler_winids[inst.win.winid] = true
+          end
+        end
+
         local target_win = nil
         for _, wid in ipairs(wins) do
-          if wid ~= fyler_winid and vim.api.nvim_win_is_valid(wid) then
+          if not all_fyler_winids[wid] and vim.api.nvim_win_is_valid(wid) then
             local cfg = vim.api.nvim_win_get_config(wid)
-            -- Skip floating windows
             if cfg.relative == "" then
               target_win = wid
               break
@@ -123,11 +141,9 @@ function M.setup(config)
         end
 
         if target_win then
-          -- Open the file in the existing editor window
           vim.api.nvim_set_current_win(target_win)
           vim.cmd("edit " .. vim.fn.fnameescape(bufname))
         else
-          -- No editor window exists: create a vertical split beside fyler
           vim.api.nvim_set_current_win(fyler_winid)
           vim.cmd("rightbelow vsplit " .. vim.fn.fnameescape(bufname))
         end
