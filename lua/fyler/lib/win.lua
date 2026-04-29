@@ -138,6 +138,18 @@ function Win:set_header(text)
   self:set_local_buf_option("modified", false)
   self:set_local_buf_option("undolevels", undolevels)
   if not was_modifiable then self:set_local_buf_option("modifiable", false) end
+
+  -- Re-apply the header highlight extmark so the path stays highlighted
+  -- after the line is rewritten (the old extmark has a stale end_col).
+  if self.namespace then
+    vim.api.nvim_buf_clear_namespace(self.bufnr, self.namespace, 0, 1)
+    if self._extmark_ids then self._extmark_ids[0] = nil end
+    self:set_extmark(0, 0, {
+      end_col  = #text,
+      hl_group = "NvimTreeRootFolder",
+      priority = 100,
+    })
+  end
 end
 
 function Win:clear_extmarks()

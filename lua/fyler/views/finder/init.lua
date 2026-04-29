@@ -537,10 +537,11 @@ function M.set_current_dir(path)
       vim.api.nvim_buf_set_name(finder.win.bufnr, finder.uri)
     end
     
-    -- Update the window title
+    -- Update the window title and the editable path header (line 1 of the buffer)
     if finder.win and finder.win:has_valid_winid() then
       local new_title = string.format(" %s ", Path.new(normalized_path):os_path())
       finder.win:update_title(new_title)
+      finder.win:set_header(vim.fn.fnamemodify(Path.new(normalized_path):os_path(), ":~"))
     end
   end
   
