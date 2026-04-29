@@ -164,6 +164,16 @@ end
 function Win:set_extmark(row, col, options)
   if not self:has_valid_bufnr() then return end
 
+  -- Clamp end_col to the actual line length to avoid "out of range" errors
+  -- that can occur when highlights are applied after a buffer update races
+  -- with the renderer's column values.
+  if options.end_col ~= nil then
+    local line = vim.api.nvim_buf_get_lines(self.bufnr, row, row + 1, false)[1]
+    if line then
+      options.end_col = math.min(options.end_col, #line)
+    end
+  end
+
   local id = vim.api.nvim_buf_set_extmark(self.bufnr, self.namespace, row, col, options)
 
   if not self._extmark_ids then self._extmark_ids = {} end

@@ -123,6 +123,7 @@ function Watcher:start_git()
       or filename == "MERGE_HEAD"
       or filename == "CHERRY_PICK_HEAD"
       or filename == "packed-refs"
+      or filename == "COMMIT_EDITMSG"
       or vim.startswith(filename, "refs/")
     then
       on_git_event(err, filename)
