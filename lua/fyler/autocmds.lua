@@ -90,12 +90,18 @@ function M.setup(config)
       local finder_mod = require("fyler.views.finder")
       local current_win = vim.api.nvim_get_current_win()
 
-      -- Find the fyler instance (if any) whose window is the current window
+      -- Find the fyler instance (if any) whose window is the current window.
+      -- Do this synchronously before vim.schedule so isopen() sees the correct
+      -- state (after schedule, winbuf() already returns the foreign buffer and
+      -- isopen() would return false, causing the redirect to be skipped).
       local matched_instance = nil
       for inst in finder_mod.iter_instances() do
         if inst and inst:isopen() then
           local fyler_winid = inst.win and inst.win.winid
           if fyler_winid and vim.api.nvim_win_is_valid(fyler_winid) and current_win == fyler_winid then
+            -- `replace` kind intentionally lets the selected file take over the
+            -- window — that is its entire purpose. Don't intercept it.
+            if inst.win.kind and inst.win.kind:match("^replace") then return end
             matched_instance = inst
             break
           end
@@ -109,15 +115,13 @@ function M.setup(config)
 
       -- A foreign buffer has entered a fyler window. Redirect it.
       vim.schedule(function()
-        -- Safety checks
+        -- Safety checks (window/buffer validity only — do NOT re-check isopen()
+        -- here because by this point winbuf() already shows the foreign buffer)
         if not vim.api.nvim_win_is_valid(fyler_winid) then return end
-        if not matched_instance:isopen() then return end
-        if vim.api.nvim_get_current_win() ~= fyler_winid then return end
+        if not (fyler_bufnr and vim.api.nvim_buf_is_valid(fyler_bufnr)) then return end
 
         -- Restore the fyler buffer in its window
-        if fyler_bufnr and vim.api.nvim_buf_is_valid(fyler_bufnr) then
-          vim.api.nvim_win_set_buf(fyler_winid, fyler_bufnr)
-        end
+        vim.api.nvim_win_set_buf(fyler_winid, fyler_bufnr)
 
         -- Find an existing editor window (any non-fyler, non-floating window)
         local tabpage = vim.api.nvim_get_current_tabpage()
@@ -144,7 +148,6 @@ function M.setup(config)
           vim.api.nvim_set_current_win(target_win)
           vim.cmd("edit " .. vim.fn.fnameescape(bufname))
         else
-          vim.api.nvim_set_current_win(fyler_winid)
           vim.cmd("rightbelow vsplit " .. vim.fn.fnameescape(bufname))
         end
       end)
