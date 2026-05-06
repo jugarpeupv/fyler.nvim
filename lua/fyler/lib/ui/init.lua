@@ -83,7 +83,7 @@ Ui.render = vim.schedule_wrap(function(self, component, ...)
     -- Partial render: keep buffer lines, only refresh extmarks
     self.win:clear_extmarks()
     -- Re-apply header highlight after clearing extmarks
-    if self.win.header then
+    if self.win.header and self.win.bufnr and vim.api.nvim_buf_is_valid(self.win.bufnr) then
       local header_line = vim.api.nvim_buf_get_lines(self.win.bufnr, 0, 1, false)[1] or ""
       self.win:set_extmark(0, 0, {
         end_col  = #header_line,

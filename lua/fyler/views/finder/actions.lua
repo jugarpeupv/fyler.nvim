@@ -86,18 +86,11 @@ local function _select(self, opener, opts)
     local fyler_win = self.win
     local created_window = false
 
-    -- When fyler stays open and there is no other window to open the file in,
-    -- create a new split immediately to the right of fyler. Use nvim_open_win
-    -- with a fresh buffer so the fyler buffer is never shown in the new window
-    -- (avoids flicker). Pin fyler's width temporarily so Neovim assigns all
-    -- remaining space (total minus fyler minus other winfixwidth windows like
-    -- opencode) to the new window without any manual arithmetic.
-    if not winid and not should_close then
+    -- When there is no usable window, create a new split to the right of fyler.
+    -- This handles both the "stay open" case and the "close on select" case when
+    -- all remaining windows have winfixbuf set (e.g. sidebar + opencode panel).
+    if not winid then
       local new_buf = vim.api.nvim_create_buf(false, true)
-      -- Snapshot all winfixwidth window widths *before* nvim_open_win so we
-      -- can restore them all after equalalways fires. Opencode stacks two
-      -- windows vertically in the same screen column; deduplicate by column
-      -- offset so we only count that column once toward fixed_others_width.
       local fyler_width = fyler_win:config().width or math.floor(vim.o.columns * 0.25)
       local fixed_others_width = 0
       local seen_cols = {}
@@ -117,23 +110,16 @@ local function _select(self, opener, opts)
           end
         end
       end
-      -- Save fyler's width too so we can restore it below.
       fixed_win_widths[fyler_win.winid] = fyler_width
       local new_width = math.max(vim.o.columns - fyler_width - 1 - fixed_others_width, 1)
-      -- Create the new window. equalalways will redistribute widths after
-      -- nvim_open_win returns; use vim.schedule to restore every winfixwidth
-      -- window (fyler, opencode, etc.) to its saved width afterwards, then
-      -- release winfixwidth on the *new* window only so future resizes work.
       winid = vim.api.nvim_open_win(new_buf, true, { split = "right", win = fyler_win.winid, width = new_width })
       local new_winid = winid
       vim.schedule(function()
-        -- Restore all previously-fixed windows to their saved widths.
         for wid, w in pairs(fixed_win_widths) do
           if vim.api.nvim_win_is_valid(wid) then
             vim.api.nvim_win_set_width(wid, w)
           end
         end
-        -- Set the new window to fill the remaining space.
         if vim.api.nvim_win_is_valid(new_winid) then
           vim.api.nvim_win_set_width(new_winid, new_width)
         end

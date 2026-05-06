@@ -504,50 +504,20 @@ function M.set_current_dir(path)
   -- Normalize and validate the path (expand relative paths like "." to absolute)
   local normalized_path = vim.fn.fnamemodify(Path.new(path):posix_path(), ":p"):gsub("/$", "")
   assert(Path.new(normalized_path):is_directory(), "Path must be a valid directory")
-  
+
   -- If the path hasn't changed, no need to rebuild
   if global_cwd == normalized_path then return end
-  
-  -- Update global CWD
-  global_cwd = normalized_path
-  
-  -- Get the original finder instance
+
   local finder = M.instance(ORIG_SLOT)
-  
-  -- Recreate the Files instance with the new root path
-  if finder and finder.files then
-    -- Stop and clean all watchers from the old files instance
-    if finder.watcher then
-      finder.watcher:disable(true) -- true = clean up paths
-    end
-    
-    -- Create new Files instance
-    finder.files = require("fyler.views.finder.files").new({
-      open = true,
-      name = Path.new(normalized_path):basename(),
-      path = normalized_path,
-      finder = finder,
-    })
-    
-    -- Update the finder's URI to match the new path (preserving slot)
-    finder.uri = helper.build_protocol_uri(normalized_path, ORIG_SLOT)
-    
-    -- Update the window buffer name to match new URI
-    if finder.win and finder.win.bufnr and vim.api.nvim_buf_is_valid(finder.win.bufnr) then
-      vim.api.nvim_buf_set_name(finder.win.bufnr, finder.uri)
-    end
-    
-    -- Update the window title and the editable path header (line 1 of the buffer)
-    if finder.win and finder.win:has_valid_winid() then
-      local new_title = string.format(" %s ", Path.new(normalized_path):os_path())
-      finder.win:update_title(new_title)
-      finder.win:set_header(vim.fn.fnamemodify(Path.new(normalized_path):os_path(), ":~"))
-    end
-  end
-  
-  -- Navigate to the new path with forced update
+  if not finder then return end
+
+  -- change_root handles: files rebuild, watcher restart, title/header update, global_cwd
+  finder:change_root(normalized_path)
+
+  -- Refresh the rendered tree. Works whether fyler is open or closed:
+  -- if open, re-renders immediately; if closed, the stale tree is replaced next open.
   vim.schedule(function()
-    M.navigate(normalized_path, { force_update = true })
+    finder:dispatch_refresh({ force_update = true })
   end)
 end
 

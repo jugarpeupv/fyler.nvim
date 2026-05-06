@@ -91,7 +91,10 @@ function Watcher:start_git()
   -- Stop any previously running git watcher before creating a new one
   self:stop_git()
 
-  local debounce_key = string.format("git_watcher:%d_%d", self.finder.win.winid, self.finder.win.bufnr)
+  local win = self.finder.win
+  local debounce_key = (win and win.winid and win.bufnr)
+    and string.format("git_watcher:%d_%d", win.winid, win.bufnr)
+    or  string.format("git_watcher:slot_%s", tostring(self.finder.slot))
   local function on_git_event(err, filename)
     if err or not filename then return end
 
