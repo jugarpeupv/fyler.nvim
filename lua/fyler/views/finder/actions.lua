@@ -112,7 +112,11 @@ local function _select(self, opener, opts)
       end
       fixed_win_widths[fyler_win.winid] = fyler_width
       local new_width = math.max(vim.o.columns - fyler_width - 1 - fixed_others_width, 1)
-      winid = vim.api.nvim_open_win(new_buf, true, { split = "right", win = fyler_win.winid, width = new_width })
+      local split_opts = { split = "right", width = new_width }
+      if fyler_win.winid and vim.api.nvim_win_is_valid(fyler_win.winid) then
+        split_opts.win = fyler_win.winid
+      end
+      winid = vim.api.nvim_open_win(new_buf, true, split_opts)
       local new_winid = winid
       vim.schedule(function()
         for wid, w in pairs(fixed_win_widths) do
