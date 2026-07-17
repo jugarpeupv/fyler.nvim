@@ -41,6 +41,7 @@ local util = require("fyler.lib.util")
 ---@field ui Ui
 ---@field user_autocmds table
 ---@field user_mappings table
+---@field min_width integer|nil
 ---@field width integer|string
 ---@field win integer|nil
 ---@field win_opts table
@@ -365,6 +366,25 @@ function Win:show()
     vim.keymap.set("n", k, v, mappings_opts)
   end
 
+  -- Resize keymaps with min_width guard
+  if self.min_width then
+    local resize_opts = { buffer = self.bufnr, silent = true }
+    vim.keymap.set("n", "<C-Left>", function()
+      if not self:has_valid_winid() then return end
+      local current = vim.api.nvim_win_get_width(self.winid)
+      if current - 5 >= self.min_width then
+        vim.api.nvim_win_set_width(self.winid, current - 5)
+      elseif current > self.min_width then
+        vim.api.nvim_win_set_width(self.winid, self.min_width)
+      end
+    end, resize_opts)
+    vim.keymap.set("n", "<C-Right>", function()
+      if not self:has_valid_winid() then return end
+      local current = vim.api.nvim_win_get_width(self.winid)
+      vim.api.nvim_win_set_width(self.winid, current + 5)
+    end, resize_opts)
+  end
+
   -- Save original window options before overriding, so they can be restored
   -- when the fyler window is hidden (important for `replace` kind where the
   -- same window is reused for the opened file).
@@ -375,6 +395,18 @@ function Win:show()
 
   for option, value in pairs(self.win_opts or {}) do
     util.set_win_option(self.winid, option, value)
+  end
+
+  -- Force the correct width after opening, like nvim-tree does.
+  -- This prevents the window from being compressed when other splits open.
+  if self:has_valid_winid() and self.width and win_config.split then
+    local target_width = win_config.width
+    if target_width and target_width > 0 then
+      local current_width = vim.api.nvim_win_get_width(self.winid)
+      if current_width ~= target_width then
+        pcall(vim.api.nvim_win_set_width, self.winid, target_width)
+      end
+    end
   end
 
   for option, value in pairs(self.buf_opts or {}) do

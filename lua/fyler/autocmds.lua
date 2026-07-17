@@ -58,6 +58,32 @@ function M.setup(config)
     callback = function() require("fyler.lib.hl").setup() end,
   })
 
+  -- Restore fyler window widths after terminal resize.
+  -- winfixwidth alone is not always sufficient when Neovim redistributes
+  -- space across splits on VimResized.
+  vim.api.nvim_create_autocmd("VimResized", {
+    group = augroup,
+    desc = "Restore fyler window widths after terminal resize",
+    callback = function()
+      local finder_mod = require("fyler.views.finder")
+      for inst in finder_mod.iter_instances() do
+        if inst and inst:isopen() and inst.win and inst.win:has_valid_winid() then
+          local winid = inst.win.winid
+          if vim.api.nvim_win_is_valid(winid) then
+            local win_config = inst.win:config()
+            local target_width = win_config.width
+            if target_width and target_width > 0 then
+              local current_width = vim.api.nvim_win_get_width(winid)
+              if current_width ~= target_width then
+                pcall(vim.api.nvim_win_set_width, winid, target_width)
+              end
+            end
+          end
+        end
+      end
+    end,
+  })
+
   if config.values.views.finder.follow_current_file then
     vim.api.nvim_create_autocmd("BufEnter", {
       group = augroup,

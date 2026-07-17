@@ -228,6 +228,7 @@ function Finder:open(kind)
     },
     user_mappings = self:action_wrap(usr_maps),
     width         = view_cfg.win.width,
+    min_width     = view_cfg.win.min_width or (type(view_cfg.win.width) == "number" and view_cfg.win.width or nil),
     win_opts      = view_cfg.win.win_opts,
   }
   -- stylua: ignore end
