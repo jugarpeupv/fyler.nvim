@@ -114,12 +114,62 @@ function Win:set_lines(start, finish, lines)
 
   vim.api.nvim_buf_clear_namespace(self.bufnr, self.namespace, 0, -1)
   self._extmark_ids = {}
-  vim.api.nvim_buf_set_lines(self.bufnr, start, finish, false, lines)
+
+  -- When replacing the full buffer, compute a line-level diff and only update
+  -- the changed range. This eliminates flicker caused by rewriting lines whose
+  -- content hasn't changed (selective refresh, ported from upstream).
+  if start == 0 and finish == -1 then
+    local old_lines = vim.api.nvim_buf_get_lines(self.bufnr, 0, -1, false)
+    local changes = Win._diff_lines(old_lines, lines)
+    if #changes == 0 then
+      if not was_modifiable then self:set_local_buf_option("modifiable", false) end
+      self:set_local_buf_option("modified", false)
+      self:set_local_buf_option("undolevels", undolevels)
+      return
+    end
+    for _, change in ipairs(changes) do
+      vim.api.nvim_buf_set_lines(self.bufnr, change.start_row, change.end_row, false, change.lines)
+    end
+  else
+    vim.api.nvim_buf_set_lines(self.bufnr, start, finish, false, lines)
+  end
 
   if not was_modifiable then self:set_local_buf_option("modifiable", false) end
 
   self:set_local_buf_option("modified", false)
   self:set_local_buf_option("undolevels", undolevels)
+end
+
+---Compute a minimal set of line changes between old and new buffer content by
+---finding a common prefix and suffix. Returns only the middle portion that
+---actually differs.
+---@param old_lines string[]
+---@param new_lines string[]
+---@return { start_row: integer, end_row: integer, lines: string[] }[]
+function Win._diff_lines(old_lines, new_lines)
+  local m, n = #old_lines, #new_lines
+  if m == 0 and n == 0 then return {} end
+
+  local prefix = 0
+  while prefix < m and prefix < n and old_lines[prefix + 1] == new_lines[prefix + 1] do
+    prefix = prefix + 1
+  end
+
+  local suffix = 0
+  while suffix < m - prefix and suffix < n - prefix and old_lines[m - suffix] == new_lines[n - suffix] do
+    suffix = suffix + 1
+  end
+
+  local start_row = prefix
+  local old_end = m - suffix
+  local new_middle = {}
+  for i = prefix + 1, n - suffix do
+    new_middle[#new_middle + 1] = new_lines[i]
+  end
+
+  if #new_middle == 0 and old_end == start_row then return {} end
+
+  return { { start_row = start_row, end_row = old_end, lines = new_middle } }
 end
 
 ---Write (or overwrite) only line 0 of the buffer with `text`, leaving the
@@ -131,7 +181,7 @@ function Win:set_header(text)
   self.header = text
 
   local was_modifiable = util.get_buf_option(self.bufnr, "modifiable")
-  local undolevels     = util.get_buf_option(self.bufnr, "undolevels")
+  local undolevels = util.get_buf_option(self.bufnr, "undolevels")
 
   self:set_local_buf_option("modifiable", true)
   self:set_local_buf_option("undolevels", -1)
@@ -146,7 +196,7 @@ function Win:set_header(text)
     vim.api.nvim_buf_clear_namespace(self.bufnr, self.namespace, 0, 1)
     if self._extmark_ids then self._extmark_ids[0] = nil end
     self:set_extmark(0, 0, {
-      end_col  = #text,
+      end_col = #text,
       hl_group = "NvimTreeRootFolder",
       priority = 100,
     })
@@ -170,9 +220,7 @@ function Win:set_extmark(row, col, options)
   -- with the renderer's column values.
   if options.end_col ~= nil then
     local line = vim.api.nvim_buf_get_lines(self.bufnr, row, row + 1, false)[1]
-    if line then
-      options.end_col = math.min(options.end_col, #line)
-    end
+    if line then options.end_col = math.min(options.end_col, #line) end
   end
 
   local id = vim.api.nvim_buf_set_extmark(self.bufnr, self.namespace, row, col, options)
@@ -306,7 +354,10 @@ function Win:show()
   self.origin_win = vim.api.nvim_get_current_win()
 
   local win_config = self:config()
-  if win_config.split and (win_config.split == "sidebar" or win_config.split:match("_all$") or win_config.split:match("_most$")) then
+  if
+    win_config.split
+    and (win_config.split == "sidebar" or win_config.split:match("_all$") or win_config.split:match("_most$"))
+  then
     if win_config.split == "sidebar" then
       vim.api.nvim_command(string.format("topleft %dvsplit", win_config.width or 35))
     elseif win_config.split == "left_most" then
@@ -403,9 +454,7 @@ function Win:show()
     local target_width = win_config.width
     if target_width and target_width > 0 then
       local current_width = vim.api.nvim_win_get_width(self.winid)
-      if current_width ~= target_width then
-        pcall(vim.api.nvim_win_set_width, self.winid, target_width)
-      end
+      if current_width ~= target_width then pcall(vim.api.nvim_win_set_width, self.winid, target_width) end
     end
   end
 
@@ -468,17 +517,30 @@ function Win:hide()
       self._saved_win_opts = nil
     end
 
-    local altbufnr = vim.fn.bufnr("#")
-    if altbufnr == -1 or altbufnr == self.bufnr then
-      util.try(vim.cmd.enew)
-    else
-      util.try(vim.api.nvim_win_set_buf, self.winid, altbufnr)
+    -- Swap in the alternate buffer, or a scratch buffer, instead of closing
+    -- the window. Closing the window on replace kind would destroy the layout
+    -- the user has carefully arranged.
+    if self:has_valid_winid() then
+      local altbufnr = vim.fn.bufnr("#")
+      if altbufnr ~= -1 and altbufnr ~= self.bufnr and vim.api.nvim_buf_is_valid(altbufnr) then
+        vim.api.nvim_win_set_buf(self.winid, altbufnr)
+      else
+        local scratch = vim.api.nvim_create_buf(false, true)
+        vim.bo[scratch].bufhidden = "wipe"
+        vim.api.nvim_win_set_buf(self.winid, scratch)
+      end
     end
   else
     util.try(vim.api.nvim_win_close, self.winid, true)
   end
 
   util.try(vim.api.nvim_buf_delete, self.bufnr, { force = true })
+
+  -- Restore focus to the window that was active before the finder opened,
+  -- but only for floating finders (non-floating kinds keep the current focus).
+  if self.kind:match("^float") and self.origin_win and vim.api.nvim_win_is_valid(self.origin_win) then
+    vim.api.nvim_set_current_win(self.origin_win)
+  end
 
   if self.on_hide then self.on_hide() end
 end

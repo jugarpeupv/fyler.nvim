@@ -13,8 +13,8 @@ local global_cwd = nil
 -- Instance registry: slot (integer) → Finder object.
 -- Declared here so all Finder methods defined below can close over it.
 local MAX_INSTANCES = 2
-local ORIG_SLOT     = 1
-local instances     = {}
+local ORIG_SLOT = 1
+local instances = {}
 
 ---Internal helper to update global CWD during navigation (for winbar sync)
 ---@param path string
@@ -94,6 +94,12 @@ function Finder:open(kind)
       end,
       ["BufWriteCmd"] = function()
         self:dispatch_mutation()
+      end,
+      ["BufLeave"] = function()
+        if self.win and self.win:has_valid_winid()
+          and vim.api.nvim_win_get_buf(self.win.winid) ~= self.win.bufnr then
+          vim.schedule(function() self:close() end)
+        end
       end,
       [{"CursorMoved","CursorMovedI"}] = (function()
         local _busy = false
@@ -239,14 +245,12 @@ function Finder:open(kind)
   -- so that next_secondary_slot() correctly sees the slot as available.
   if self.slot ~= ORIG_SLOT and self.win:has_valid_winid() then
     local winid = self.win.winid
-    local slot  = self.slot
+    local slot = self.slot
     vim.api.nvim_create_autocmd("WinClosed", {
-      pattern  = tostring(winid),
-      once     = true,
+      pattern = tostring(winid),
+      once = true,
       callback = function()
-        if instances[slot] and instances[slot].win and instances[slot].win.winid == winid then
-          instances[slot] = nil
-        end
+        if instances[slot] and instances[slot].win and instances[slot].win.winid == winid then instances[slot] = nil end
       end,
     })
   end
@@ -271,9 +275,7 @@ function Finder:close()
   require("fyler.views.finder.clipboard").clear(self)
   if self.win then self.win:hide() end
   -- Free the slot so it can be reused by the next secondary
-  if self.slot and self.slot ~= 1 then
-    instances[self.slot] = nil
-  end
+  if self.slot and self.slot ~= 1 then instances[self.slot] = nil end
 end
 
 function Finder:navigate(...) self.files:navigate(...) end
@@ -296,13 +298,13 @@ function Finder:change_root(path)
   -- Update the finder's URI to match the new path (but don't change buffer name)
   local normalized_path = vim.fn.fnamemodify(Path.new(path):posix_path(), ":p"):gsub("/$", "")
   self.uri = helper.build_protocol_uri(normalized_path, self.slot)
-  
+
   -- Update the window title
-  if self.win then 
+  if self.win then
     self.win:update_title(string.format(" %s ", Path.new(path):os_path()))
     self.win:set_header(vim.fn.fnamemodify(Path.new(path):os_path(), ":~"))
   end
-  
+
   -- Update global CWD for display purposes (winbar, etc.)
   -- This allows external consumers like winbar to read the current navigation path
   update_global_cwd(normalized_path)
@@ -346,9 +348,7 @@ function Finder:dispatch_refresh(opts)
     vim.schedule(function()
       require("fyler.views.finder.ui").files(
         files_table,
-        function(component, options)
-          self.win.ui:render(component, options, opts.onrender)
-        end
+        function(component, options) self.win.ui:render(component, options, opts.onrender) end
       )
     end)
   end)
@@ -450,14 +450,10 @@ function M.instance(slot)
   if instances[slot] then return instances[slot] end
 
   -- Initialize global_cwd on first-ever instance creation
-  if not global_cwd then
-    global_cwd = vim.fn.fnamemodify(vim.fn.getcwd(), ":p"):gsub("/$", "")
-  end
+  if not global_cwd then global_cwd = vim.fn.fnamemodify(vim.fn.getcwd(), ":p"):gsub("/$", "") end
 
   -- Secondaries start at the original instance's current directory
-  local path = (slot == ORIG_SLOT or not instances[ORIG_SLOT])
-    and global_cwd
-    or instances[ORIG_SLOT]:getcwd()
+  local path = (slot == ORIG_SLOT or not instances[ORIG_SLOT]) and global_cwd or instances[ORIG_SLOT]:getcwd()
 
   local uri = helper.build_protocol_uri(path, slot)
 
@@ -517,21 +513,15 @@ function M.set_current_dir(path)
 
   -- Refresh the rendered tree. Works whether fyler is open or closed:
   -- if open, re-renders immediately; if closed, the stale tree is replaced next open.
-  vim.schedule(function()
-    finder:dispatch_refresh({ force_update = true })
-  end)
+  vim.schedule(function() finder:dispatch_refresh({ force_update = true }) end)
 end
 
 ---@param kind WinKind|nil
-function M.open(kind) 
-  M.instance(ORIG_SLOT):open(kind or config.values.views.finder.win.kind) 
-end
+function M.open(kind) M.instance(ORIG_SLOT):open(kind or config.values.views.finder.win.kind) end
 
 M.close = vim.schedule_wrap(function()
   local finder = instances[ORIG_SLOT]
-  if finder and finder:isopen() then
-    finder:close()
-  end
+  if finder and finder:isopen() then finder:close() end
 end)
 
 ---@param kind WinKind|nil
@@ -546,9 +536,7 @@ end)
 
 M.focus = vim.schedule_wrap(function()
   local finder = instances[ORIG_SLOT]
-  if finder and finder.win then
-    finder.win:focus()
-  end
+  if finder and finder.win then finder.win:focus() end
 end)
 
 -- TODO: Can futher optimize by determining whether `files:navgiate` did any change or not?
@@ -558,7 +546,7 @@ M.navigate = vim.schedule_wrap(function(path, opts)
 
   local finder = instances[ORIG_SLOT]
   if not finder then return end
-  
+
   if not finder:isopen() then return end
 
   local set_cursor = vim.schedule_wrap(function(ref_id)
