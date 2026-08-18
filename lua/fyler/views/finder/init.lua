@@ -343,6 +343,19 @@ function Finder:dispatch_refresh(opts)
 
   async.void(function()
     local files_table = get_table()
+
+    -- Re-check for a git repo after a filesystem update.  This handles the
+    -- case where `git init` or `git clone` was run externally: the directory
+    -- watcher detects the new .git/ entry and triggers a force_update, but
+    -- the git watcher (start_git) was never initialised because .git didn't
+    -- exist when the window was first shown.  Without this, subsequent git
+    -- operations (git add, git commit, …) go undetected because the directory
+    -- watcher intentionally skips .git/index changes (relying on the git
+    -- watcher that was never started).
+    if opts.force_update then
+      self.watcher:start_git()
+    end
+
     vim.schedule(function()
       require("fyler.views.finder.ui").files(
         files_table,
