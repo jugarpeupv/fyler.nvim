@@ -435,7 +435,7 @@ M.files = Component.new_async(function(node, onupdate)
 
     local indentation_text = Text(string.rep(" ", 2 * depth))
     local icon_text = Text(icon, { highlight = icon_highlight })
-    local ref_id_text = item.ref_id and Text(string.format("/%05d ", item.ref_id)) or Text("")
+    local ref_id_text = item.ref_id and Text(string.format("/%05d ", item.ref_id), { conceal = "" }) or Text("")
     local perm_text = perm_enabled
       and Text("  " .. get_permissions(item.link or item.path), { highlight = "FylerPermissions", priority = 200 })
       or Text("")
@@ -495,7 +495,7 @@ M.refresh_details = function(node, onupdate)
 
     local indentation_text = Text(string.rep(" ", 2 * depth))
     local icon_text = Text(icon, { highlight = icon_highlight })
-    local ref_id_text = item.ref_id and Text(string.format("/%05d ", item.ref_id)) or Text("")
+    local ref_id_text = item.ref_id and Text(string.format("/%05d ", item.ref_id), { conceal = "" }) or Text("")
     local perm_text = perm_enabled
       and Text("  " .. get_permissions(item.link or item.path), { highlight = "FylerPermissions", priority = 200 })
       or Text("")

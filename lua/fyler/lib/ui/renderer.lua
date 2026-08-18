@@ -66,6 +66,7 @@ function Renderer:_render_text(component, current_col)
         col_end = current_col + #text_value,
         highlight_group = highlight,
         priority = component.option and component.option.priority,
+        conceal = component.option and component.option.conceal,
       })
     end
 

@@ -356,12 +356,19 @@ end
 function config.rev_maps(name)
   local rev_maps = {}
   for k, v in pairs(config.values.views[name].mappings or {}) do
-    if type(v) == "string" then
-      local current = rev_maps[v]
+    -- A mapping value may be a table of per-mode definitions, e.g.
+    -- { n = function(view) ..., x = "VisualYankEntries" }. The "x"/"visual"
+    -- entry is a visual-mode action name, collected here for rev_maps.
+    local action = v
+    if type(v) == "table" then
+      action = v.x or v.visual or v
+    end
+    if type(action) == "string" then
+      local current = rev_maps[action]
       if current then
         table.insert(current, k)
       else
-        rev_maps[v] = { k }
+        rev_maps[action] = { k }
       end
     end
   end
@@ -378,7 +385,12 @@ end
 function config.usr_maps(name)
   local user_maps = {}
   for k, v in pairs(config.values.views[name].mappings or {}) do
-    if type(v) == "function" then user_maps[k] = v end
+    -- Plain functions bind in normal mode. A per-mode table's "n" entry does
+    -- the same, so a key like gY can map to a function in normal mode while
+    -- keeping a visual-mode action (see config.rev_maps).
+    local fn = v
+    if type(v) == "table" then fn = v.n or v end
+    if type(fn) == "function" then user_maps[k] = fn end
   end
 
   return user_maps

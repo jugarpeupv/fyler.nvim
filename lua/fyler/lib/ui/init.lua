@@ -116,11 +116,13 @@ function Ui:render(component, ...)
 
       for _, highlight in ipairs(highlights) do
         -- stylua: ignore start
-        self.win:set_extmark(highlight.line + line_offset, highlight.col_start, {
+        local extmark_opts = {
           end_col   = highlight.col_end,
           hl_group  = highlight.highlight_group,
           priority  = highlight.priority,
-        })
+        }
+        if highlight.conceal then extmark_opts.conceal = highlight.conceal end
+        self.win:set_extmark(highlight.line + line_offset, highlight.col_start, extmark_opts)
         -- stylua: ignore end
       end
 
