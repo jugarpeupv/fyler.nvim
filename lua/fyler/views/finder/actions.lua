@@ -514,7 +514,15 @@ function M.n_paste(self)
       local payload = clipboard.read()
       if not payload or #payload.paths == 0 then return end
 
-      local cwd = self:getcwd()
+      -- Determine target directory from cursor position:
+      -- Always paste into the parent directory of the current line
+      local entry = self:cursor_node_entry()
+      local cwd
+      if entry then
+        cwd = Path.new(entry.path):parent():posix_path()
+      else
+        cwd = self:getcwd()
+      end
 
       -- Build operations
       local operations = {}
