@@ -402,9 +402,6 @@ M.files = Component.new_async(function(node, onupdate)
   local current_tag = M.tag
   if not node or not node.children then return onupdate({ tag = "files", children = {} }) end
 
-  local flattened_entries = flatten_tree(node)
-  if #flattened_entries == 0 then return onupdate({ tag = "files", children = {} }) end
-
   local perm_enabled = config.values.views.finder.columns.permission
     and config.values.views.finder.columns.permission.enabled
 
@@ -421,6 +418,9 @@ M.files = Component.new_async(function(node, onupdate)
       Text("../", { highlight = "FylerFSDirectoryName" }),
     }))
   end
+
+  local flattened_entries = flatten_tree(node)
+  if #flattened_entries == 0 then return onupdate({ tag = "files", children = { Row({ Column(files_column) }) } }) end
 
   for _, entry in ipairs(flattened_entries) do
     local item, depth = entry.item, entry.depth
