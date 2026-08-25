@@ -249,7 +249,17 @@ function M.mv(opts, _next)
         end)
       end)
     else
-      vim.uv.fs_rename(src, dst, function(err) pcall(_next, err) end)
+      vim.uv.fs_rename(src, dst, function(err)
+        if err and (err:find("EXDEV") or err:find("cross%-device")) then
+          -- Cross-device move (e.g. pCloud Drive is a separate volume) – fall back to copy+delete
+          M.cp({ src = src, dst = dst, flags = { r = true } }, function(err_cp)
+            if err_cp then return pcall(_next, err_cp) end
+            M.rm({ path = src, flags = { r = true } }, function(err_rm) pcall(_next, err_rm) end)
+          end)
+        else
+          pcall(_next, err)
+        end
+      end)
     end
   end)
 end

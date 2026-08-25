@@ -515,11 +515,15 @@ function M.n_paste(self)
       if not payload or #payload.paths == 0 then return end
 
       -- Determine target directory from cursor position:
-      -- Always paste into the parent directory of the current line
+      -- If cursor is on a directory, paste into that directory; otherwise paste into the parent
       local entry = self:cursor_node_entry()
       local cwd
       if entry then
-        cwd = Path.new(entry.path):parent():posix_path()
+        if entry.type == "directory" then
+          cwd = Path.new(entry.path):posix_path()
+        else
+          cwd = Path.new(entry.path):parent():posix_path()
+        end
       else
         cwd = self:getcwd()
       end
