@@ -70,13 +70,20 @@ function M.setup(opts)
   local finder = setmetatable({}, { __index = function(_, k) return require("fyler.views.finder")[k] end })
 
   -- Fyler.API: Opens finder view with provided options
+  -- When `dir` is provided, isolates per-instance: existing fyler buffers keep
+  -- their cwd, new instance is opened for the requested dir (respects MAX_INSTANCES).
   M.open = function(args)
     args = args or {}
-    -- If dir is provided, set it as current dir first
     if args.dir then
-      finder.set_current_dir(args.dir)
+      if finder.open_at then
+        finder.open_at(args.dir, args.kind)
+      else
+        finder.set_current_dir(args.dir)
+        finder.open(args.kind)
+      end
+    else
+      finder.open(args.kind)
     end
-    finder.open(args.kind)
   end
 
   -- Fyler.API: Closes current finder view
@@ -85,11 +92,16 @@ function M.setup(opts)
   -- Fyler.API: Toggles finder view with provided options
   M.toggle = function(args)
     args = args or {}
-    -- If dir is provided, set it as current dir first
     if args.dir then
-      finder.set_current_dir(args.dir)
+      if finder.toggle_at then
+        finder.toggle_at(args.dir, args.kind)
+      else
+        finder.set_current_dir(args.dir)
+        finder.toggle(args.kind)
+      end
+    else
+      finder.toggle(args.kind)
     end
-    finder.toggle(args.kind)
   end
 
   -- Fyler.API: Focus finder view

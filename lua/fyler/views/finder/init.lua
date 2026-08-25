@@ -303,9 +303,11 @@ function Finder:change_root(path)
     self.win:set_header(vim.fn.fnamemodify(Path.new(path):os_path(), ":~"))
   end
   
-  -- Update global CWD for display purposes (winbar, etc.)
-  -- This allows external consumers like winbar to read the current navigation path
-  update_global_cwd(normalized_path)
+  -- Update global CWD only for the original instance so secondary
+  -- navigations do not mutate the global / leak into other buffers.
+  if self.slot == ORIG_SLOT then
+    update_global_cwd(normalized_path)
+  end
 
   -- Restart the git watcher for the new directory.  disable(true) above stopped
   -- and cleared all watchers; start_git() resolves the new git dir from the
@@ -457,8 +459,9 @@ end
 
 ---Get or create the finder instance for the given slot.
 ---@param slot integer|nil  defaults to ORIG_SLOT
+---@param dir string|nil optional directory to use when creating a new instance
 ---@return Finder
-function M.instance(slot)
+function M.instance(slot, dir)
   slot = slot or ORIG_SLOT
   if instances[slot] then return instances[slot] end
 
@@ -467,10 +470,15 @@ function M.instance(slot)
     global_cwd = vim.fn.fnamemodify(vim.fn.getcwd(), ":p"):gsub("/$", "")
   end
 
-  -- Secondaries start at the original instance's current directory
-  local path = (slot == ORIG_SLOT or not instances[ORIG_SLOT])
-    and global_cwd
-    or instances[ORIG_SLOT]:getcwd()
+  local path
+  if dir then
+    path = vim.fn.fnamemodify(Path.new(dir):posix_path(), ":p"):gsub("/$", "")
+  else
+    -- Secondaries start at the original instance's current directory
+    path = (slot == ORIG_SLOT or not instances[ORIG_SLOT])
+      and global_cwd
+      or instances[ORIG_SLOT]:getcwd()
+  end
 
   local uri = helper.build_protocol_uri(path, slot)
 
@@ -533,6 +541,107 @@ function M.set_current_dir(path)
   vim.schedule(function()
     finder:dispatch_refresh({ force_update = true })
   end)
+end
+
+function M.get_current_dir() return global_cwd end
+
+---Open (or focus) a finder instance for the given directory.
+---Isolated per-instance: does NOT mutate other instances' cwd.
+---If an instance with that dir already exists, it is (re)opened/focused.
+---Otherwise the orig slot is reused when closed, else a secondary slot is allocated.
+---@param dir string directory to open
+---@param kind WinKind|nil
+function M.open_at(dir, kind)
+  kind = kind or config.values.views.finder.win.kind
+  if helper.is_protocol_uri(dir) then
+    dir = helper.parse_protocol_uri(dir) or dir
+  end
+  local normalized = vim.fn.fnamemodify(Path.new(dir):posix_path(), ":p"):gsub("/$", "")
+  assert(Path.new(normalized):is_directory(), "Path must be a valid directory")
+
+  -- Reuse any existing instance (open or closed) that already points at this dir
+  for _, inst in pairs(instances) do
+    if inst:getcwd() == normalized then
+      if inst:isopen() then
+        -- Already open — just focus it (or reopen with different kind)
+        if kind and inst.win and inst.win.kind ~= kind then
+          -- Kind mismatch: close and reopen with requested kind
+          inst:close()
+          vim.schedule(function() inst:open(kind) end)
+        end
+        return inst
+      else
+        inst:open(kind)
+        return inst
+      end
+    end
+  end
+
+  -- No existing instance for this dir: reuse orig if it is closed
+  local orig = instances[ORIG_SLOT]
+  if not orig or not orig:isopen() then
+    local f = M.instance(ORIG_SLOT, normalized)
+    if f:getcwd() ~= normalized then
+      f:change_root(normalized)
+      vim.schedule(function() f:dispatch_refresh({ force_update = true }) end)
+    end
+    f:open(kind)
+    return f
+  end
+
+  -- Orig is open with a different dir — allocate or reuse a secondary
+  local slot = next_secondary_slot()
+  if slot then
+    local f = M.instance(slot, normalized)
+    f:open(kind)
+    return f
+  end
+  -- No empty secondary slot: try to reuse a closed secondary
+  for s = 2, MAX_INSTANCES do
+    local inst = instances[s]
+    if inst and not inst:isopen() then
+      if inst:getcwd() ~= normalized then
+        inst:change_root(normalized)
+        vim.schedule(function() inst:dispatch_refresh({ force_update = true }) end)
+      end
+      inst:open(kind)
+      return inst
+    end
+  end
+  vim.notify("[Fyler] Maximum number of instances (" .. MAX_INSTANCES .. ") already open. Close one first.", vim.log.levels.WARN)
+  return nil
+end
+
+---Toggle the finder instance for the given directory.
+---If an instance with that dir is open it is closed, otherwise it is opened.
+---@param dir string
+---@param kind WinKind|nil
+function M.toggle_at(dir, kind)
+  kind = kind or config.values.views.finder.win.kind
+  if helper.is_protocol_uri(dir) then
+    dir = helper.parse_protocol_uri(dir) or dir
+  end
+  local normalized = vim.fn.fnamemodify(Path.new(dir):posix_path(), ":p"):gsub("/$", "")
+  assert(Path.new(normalized):is_directory(), "Path must be a valid directory")
+
+  for _, inst in pairs(instances) do
+    if inst:getcwd() == normalized then
+      if inst:isopen() then
+        -- Respect kind filter if provided: only close when kind matches
+        if not kind or inst:isopen(kind) then
+          inst:close()
+        else
+          inst:open(kind)
+        end
+      else
+        inst:open(kind)
+      end
+      return inst
+    end
+  end
+
+  -- No existing instance for this dir — open a new one
+  return M.open_at(normalized, kind)
 end
 
 ---@param kind WinKind|nil
