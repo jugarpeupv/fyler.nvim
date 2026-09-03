@@ -52,6 +52,69 @@ function M.setup(config)
     })
   end
 
+  -- :e in a fyler buffer should reload, not leave it blank.
+  vim.api.nvim_create_autocmd("BufReadCmd", {
+    group = augroup,
+    pattern = "fyler://*",
+    desc = "Reload fyler buffer on :e",
+    callback = function(args)
+      local bufname = vim.api.nvim_buf_get_name(args.buf)
+      local _, slot = helper.parse_protocol_uri(bufname)
+      if not slot then return end
+      local ok, finder_mod = pcall(require, "fyler.views.finder")
+      if not ok then return end
+      local inst = finder_mod.instance(slot)
+      if inst and inst.win and inst.win.bufnr == args.buf then
+        if vim.api.nvim_buf_line_count(args.buf) == 0 then
+          pcall(vim.api.nvim_buf_set_lines, args.buf, 0, -1, false, { inst.win.header or inst:getcwd() })
+        end
+        inst:dispatch_refresh({ force_update = true })
+      end
+    end,
+  })
+
+  -- Ensure :w always finds a handler for acwrite buffers (prevents E676 after dd)
+  vim.api.nvim_create_autocmd("BufWriteCmd", {
+    group = augroup,
+    pattern = "fyler://*",
+    desc = "Handle :w for fyler buffers",
+    callback = function(args)
+      local bufname = vim.api.nvim_buf_get_name(args.buf)
+      local _, slot = helper.parse_protocol_uri(bufname)
+      if not slot then return end
+      local ok, finder_mod = pcall(require, "fyler.views.finder")
+      if not ok then return end
+      local inst = finder_mod.instance(slot)
+      if inst and inst.win and inst.win.bufnr == args.buf then
+        inst:dispatch_mutation()
+      end
+    end,
+  })
+
+  -- Ensure conceal for fyler buffers after :e / ColorScheme
+  vim.api.nvim_create_autocmd({ "BufEnter", "WinEnter", "BufWinEnter" }, {
+    group = augroup,
+    pattern = "fyler://*",
+    desc = "Ensure conceal for fyler ref_ids",
+    callback = function(args)
+      local buf = args.buf
+      for _, winid in ipairs(vim.fn.win_findbuf(buf)) do
+        if vim.api.nvim_win_is_valid(winid) then
+          vim.wo[winid].conceallevel = 3
+          vim.wo[winid].concealcursor = "nvic"
+        end
+      end
+      local curwin = vim.api.nvim_get_current_win()
+      if vim.api.nvim_win_is_valid(curwin) then
+        local curbuf = vim.api.nvim_win_get_buf(curwin)
+        if curbuf == buf or vim.bo[curbuf].filetype == "fyler" then
+          vim.wo[curwin].conceallevel = 3
+          vim.wo[curwin].concealcursor = "nvic"
+        end
+      end
+    end,
+  })
+
   vim.api.nvim_create_autocmd("ColorScheme", {
     group = augroup,
     desc = "Adjust highlight groups with respect to colorscheme",

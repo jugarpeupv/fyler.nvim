@@ -396,6 +396,9 @@ function Win:show()
   for option, value in pairs(self.win_opts or {}) do
     util.set_win_option(self.winid, option, value)
   end
+  -- Ensure conceal level is correct (ids hidden except maybe at cursor if nvic)
+  pcall(util.set_win_option, self.winid, "conceallevel", 3)
+  pcall(util.set_win_option, self.winid, "concealcursor", "nvic")
 
   -- Force the correct width after opening, like nvim-tree does.
   -- This prevents the window from being compressed when other splits open.

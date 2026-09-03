@@ -59,7 +59,7 @@ function Renderer:_render_text(component, current_col)
       })
     end
 
-    if highlight then
+    if highlight or (component.option and component.option.conceal ~= nil) then
       table.insert(self.highlight, {
         line = self.flag.row_base_line,
         col_start = current_col,
@@ -87,13 +87,14 @@ function Renderer:_render_text(component, current_col)
       })
     end
 
-    if highlight then
+    if highlight or (component.option and component.option.conceal ~= nil) then
       table.insert(self.highlight, {
         line = current_line_idx,
         col_start = 0,
         col_end = #text_value,
         highlight_group = highlight,
         priority = component.option and component.option.priority,
+        conceal = component.option and component.option.conceal,
       })
     end
   end
@@ -208,6 +209,7 @@ function Renderer:_render_column_in_row(component, current_col)
       col_end = column_start_col + hl.col_end,
       highlight_group = hl.highlight_group,
       priority = hl.priority,
+      conceal = hl.conceal,
     })
   end
 

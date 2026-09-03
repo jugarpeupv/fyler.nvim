@@ -90,7 +90,13 @@ function Finder:open(kind)
   self.win = require("fyler.lib.win").new {
     autocmds      = {
       ["BufReadCmd"] = function()
-        self:dispatch_refresh()
+        -- :e / :edit should reload instead of leaving buffer blank.
+        if self.files and self.win and self.win:has_valid_bufnr() then
+          if vim.api.nvim_buf_line_count(self.win.bufnr) == 0 then
+            pcall(vim.api.nvim_buf_set_lines, self.win.bufnr, 0, -1, false, { self.win.header or self:getcwd() })
+          end
+        end
+        self:dispatch_refresh({ force_update = true })
       end,
       ["BufWriteCmd"] = function()
         self:dispatch_mutation()
@@ -98,6 +104,10 @@ function Finder:open(kind)
       [{"CursorMoved","CursorMovedI"}] = (function()
         local _busy = false
         return function()
+          if self.win and self.win:has_valid_winid() then
+            pcall(vim.api.nvim_set_option_value, "conceallevel", 3, { win = self.win.winid })
+            pcall(vim.api.nvim_set_option_value, "concealcursor", "nvic", { win = self.win.winid })
+          end
           if _busy then return end
           local cur = vim.api.nvim_get_current_line()
           local ref_id = helper.parse_ref_id(cur)
