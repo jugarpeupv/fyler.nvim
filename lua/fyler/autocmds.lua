@@ -73,12 +73,17 @@ function M.setup(config)
     end,
   })
 
-  -- Ensure :w always finds a handler for acwrite buffers (prevents E676 after dd)
+  -- Fallback :w handler for acwrite buffers (prevents E676 after dd).
+  -- Skips when the window's own buffer-local BufWriteCmd exists so the
+  -- mutation never runs twice (double trash of the same file makes the
+  -- second attempt fail with "file doesn't exist").
   vim.api.nvim_create_autocmd("BufWriteCmd", {
     group = augroup,
     pattern = "fyler://*",
     desc = "Handle :w for fyler buffers",
     callback = function(args)
+      local ok_local, local_au = pcall(vim.api.nvim_get_autocmds, { event = "BufWriteCmd", buffer = args.buf })
+      if ok_local and local_au and #local_au > 0 then return end
       local bufname = vim.api.nvim_buf_get_name(args.buf)
       local _, slot = helper.parse_protocol_uri(bufname)
       if not slot then return end
