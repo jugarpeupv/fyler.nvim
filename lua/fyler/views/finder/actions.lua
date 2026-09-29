@@ -17,7 +17,7 @@ end
 ---@param opener fun(path: string)
 ---@param opts? fyler.views.finder.actions.select_opts
 local function _select(self, opener, opts)
-  opts = vim.tbl_extend("force", { winpick = true }, opts or {})
+  opts = vim.tbl_extend("force", { winpick = true, keep_open = false }, opts or {})
 
   -- Line 2 (vim line number) is always the "../" parent-directory navigation entry.
   -- Pressing <CR> on it navigates up one directory, matching netrw behaviour.
@@ -45,10 +45,16 @@ local function _select(self, opener, opts)
     return self:dispatch_refresh({ force_update = true })
   end
 
-  -- Close if kind=replace|float or config.values.views.finder.close_on_select is enabled
-  local should_close = self.win.kind:match("^replace")
-    or self.win.kind:match("^float")
-    or config.values.views.finder.close_on_select
+  -- Close if kind=replace|float or config.values.views.finder.close_on_select is enabled.
+  -- Split openers (vsplit/split) keep fyler open: closing first would wipe the
+  -- fyler buffer that the split originates from, leaving an empty [No Name]
+  -- pane (e.g. SelectVSplit from a single-window replace layout).
+  local should_close = not opts.keep_open
+    and (
+      self.win.kind:match("^replace")
+      or self.win.kind:match("^float")
+      or config.values.views.finder.close_on_select
+    )
 
   local function is_usable_win(winid)
     if not vim.api.nvim_win_is_valid(winid) then return false end
@@ -182,7 +188,8 @@ function M.n_select_v_split(self)
           args = { vim.fn.fnameescape(Path.new(path):os_path()) },
           mods = { keepalt = false },
         })
-      end
+      end,
+      { keep_open = true }
     )
   end
 end
@@ -196,7 +203,8 @@ function M.n_select_split(self)
           args = { vim.fn.fnameescape(Path.new(path):os_path()) },
           mods = { keepalt = false },
         })
-      end
+      end,
+      { keep_open = true }
     )
   end
 end
