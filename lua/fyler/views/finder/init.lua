@@ -149,10 +149,12 @@ function Finder:open(kind)
       [rev_maps["GotoNode"]]           = self:action "n_goto_node",
       [rev_maps["GotoParent"]]         = self:action "n_goto_parent",
       [rev_maps["Select"]]             = self:action "n_select",
+      [rev_maps["SelectIfDirectory"]] = self:action "n_select_if_directory",
       [rev_maps["SelectSplit"]]        = self:action "n_select_split",
       [rev_maps["SelectTab"]]          = self:action "n_select_tab",
       [rev_maps["SelectVSplit"]]       = self:action "n_select_v_split",
       [rev_maps["TogglePermissions"]]       = self:action "n_toggle_permission",
+      [rev_maps["ToggleDetails"]]           = self:action "n_toggle_details",
       [rev_maps["PasteEntry"]]              = self:action "n_paste",
       [rev_maps["SortByCreationTime"]]      = self:action "n_sort_creation_time",
       [rev_maps["GotoCwdOriginal"]]         = self:action "n_goto_cwd_original",
@@ -189,6 +191,47 @@ function Finder:open(kind)
 
         self:change_root(path):dispatch_refresh({ force_update = true })
       end, mopts)
+
+      -- Smart `b`: from the filename start, jump to the previous line's
+      -- size ("  1146B") instead of landing inside the concealed /NNNNN
+      -- ref_id (which CursorMoved would just push back out of, making `b`
+      -- a no-op). Anywhere else, or with a count, falls back to builtin `b`.
+      -- Skipped when the user mapped `b` themselves or the size column is off.
+      do
+        local size_on = config.values.views.finder.columns.size
+          and config.values.views.finder.columns.size.enabled
+        local user_b = view_cfg.mappings and view_cfg.mappings["b"]
+        if size_on and not user_b then
+          vim.keymap.set("n", "b", function()
+            local function fallback(count)
+              vim.api.nvim_feedkeys((count > 0 and count or "") .. "b", "n", false)
+            end
+            if vim.v.count > 0 then return fallback(vim.v.count) end
+            if not self.win:has_valid_winid() then return end
+            local row, col = self.win:get_cursor()
+            if not (row and col) then return end
+            local cur = vim.api.nvim_get_current_line()
+            local ref_id = helper.parse_ref_id(cur)
+            if not ref_id then return fallback(0) end
+            local _, ub = string.find(cur, string.format("/%05d ", ref_id))
+            if not ub then return fallback(0) end
+            -- Only hijack at (or inside) the leading technical zone;
+            -- `ub` is the 1-indexed end of "/NNNNN ", i.e. the 0-indexed
+            -- column of the first filename character.
+            if col > ub then return fallback(0) end
+            local prev = row - 1
+            if prev < 1 then return end
+            local prev_line = vim.api.nvim_buf_get_lines(bufnr, prev - 1, prev, false)[1]
+            if not prev_line then return fallback(0) end
+            -- `.*` backtracks from the end, so `.*()%d+` would stop at
+            -- the last digit; requiring the preceding space anchors the
+            -- capture at the first digit of the size ("  991B" -> "|991B").
+            local ds = prev_line:match(".*%s()%d+B%s*$")
+            if not ds then return fallback(0) end
+            self.win:set_cursor(prev, ds - 1)
+          end, mopts)
+        end
+      end
 
       -- Visual-mode actions: registered as "x" so they capture the line range
       -- from the visual selection. Cannot go through the normal mappings table

@@ -1,6 +1,30 @@
+local config = require("fyler.config")
+
 local M = {}
 
 local ORIG_SLOT = 1
+
+---Whether the inline size column ("<n>B" real text) is rendered.
+---Parsing only strips the size suffix when it could have been rendered.
+local function size_column_enabled()
+  return config.values
+    and config.values.views
+    and config.values.views.finder
+    and config.values.views.finder.columns
+    and config.values.views.finder.columns.size
+    and config.values.views.finder.columns.size.enabled
+end
+
+---Strip one trailing "  <n>B" size suffix, if present.
+---Only call for lines that carry a ref_id: user-typed new entries never
+---have a size suffix, so stripping there would corrupt names like "1B".
+---@param str string
+---@return string
+function M.strip_size_suffix(str)
+  if not size_column_enabled() then return str end
+  local stripped = str:gsub("%s+%d+B%s*$", "")
+  return stripped
+end
 
 ---@param uri string|nil
 ---@return boolean
@@ -64,13 +88,14 @@ function M.parse_indent_level(str) return #(str:match("^(%s*)" or "")) end
 
 ---Returns the 9-char permission string embedded in a buffer line, or nil when
 ---the permission column is not present in that line.
----Lines with a ref_id have format: <indent><icon>  /NNNNN name  rwxrwxrwx
----                                                              ^^^^^^^^^^^
+---Lines with a ref_id have format: <indent><icon>  /NNNNN name  rwxrwxrwx  123B
+---                                              perms ^^^^^^^^^       size ^^^^
 ---@param str string
 ---@return string|nil
 function M.parse_permissions(str)
-  -- Permissions are the last 9 non-space characters on the line.
-  local after_ref = str:match("/%d+ (.*)$")
+  -- Size suffix (real text) comes after permissions — strip it first so the
+  -- permission string is again at the end of the line.
+  local after_ref = M.strip_size_suffix(str):match("/%d+ (.*)$")
   if not after_ref then return nil end
   local perm = after_ref:match("%s+([rwx%-][rwx%-][rwx%-][rwx%-][rwx%-][rwx%-][rwx%-][rwx%-][rwx%-])%s*$")
   return perm or nil
@@ -85,8 +110,9 @@ function M.parse_is_directory(str)
   if M.parse_ref_id(str) then
     local after_ref = str:match("/%d+ (.*)$")
     if not after_ref then return false end
-    -- Strip trailing permissions ("  rwxrwxrwx") if present, then check for "/"
-    name = after_ref:gsub("%s+[rwx%-][rwx%-][rwx%-][rwx%-][rwx%-][rwx%-][rwx%-][rwx%-][rwx%-]%s*$", "")
+    -- Strip trailing size ("  123B") first, then permissions ("  rwxrwxrwx"),
+    -- then check for "/"
+    name = M.strip_size_suffix(after_ref):gsub("%s+[rwx%-][rwx%-][rwx%-][rwx%-][rwx%-][rwx%-][rwx%-][rwx%-][rwx%-]%s*$", "")
   else
     name = str:gsub("^%s*", "")
   end
@@ -100,8 +126,8 @@ function M.parse_name(str)
   if M.parse_ref_id(str) then
     local after_ref = str:match("/%d+ (.*)$")
     if not after_ref then return "" end
-    -- Strip trailing permissions ("  rwxrwxrwx") if present
-    name = after_ref:gsub("%s+[rwx%-][rwx%-][rwx%-][rwx%-][rwx%-][rwx%-][rwx%-][rwx%-][rwx%-]%s*$", "")
+    -- Strip trailing size ("  123B") first, then permissions ("  rwxrwxrwx")
+    name = M.strip_size_suffix(after_ref):gsub("%s+[rwx%-][rwx%-][rwx%-][rwx%-][rwx%-][rwx%-][rwx%-][rwx%-][rwx%-]%s*$", "")
   else
     name = str:gsub("^%s*", ""):match(".*")
   end

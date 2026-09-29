@@ -24,11 +24,18 @@ function M.new_neovim()
     nvim.set_size(20, 80)
   end
 
-  -- Like setup() but also disables the inline permission column so that
-  -- existing screenshot references stay valid (permissions change buffer text).
+  -- Like setup() but also disables the inline permission and size columns so
+  -- that existing screenshot references stay valid (both change buffer text).
   nvim.setup_no_perm = function(opts)
     opts = vim.tbl_deep_extend("keep", opts or {}, {
-      views = { finder = { columns = { permission = { enabled = false } } } },
+      views = {
+        finder = {
+          columns = {
+            permission = { enabled = false },
+            size = { enabled = false },
+          },
+        },
+      },
     })
     nvim.setup(opts)
   end

@@ -164,6 +164,19 @@ local function _select(self, opener, opts)
   end
 end
 
+---Select only when the cursorline is a directory (expand/collapse/enter).
+---On files (or the "../" row) fall through to builtin `L`
+---(cursor to the bottom of the window).
+function M.n_select_if_directory(self)
+  return function()
+    local entry = self:cursor_node_entry()
+    if entry and entry.type == "directory" then
+      return M.n_select(self)()
+    end
+    vim.api.nvim_feedkeys("$", "n", false)
+  end
+end
+
 function M.n_select_tab(self)
   return function()
     _select(
@@ -361,6 +374,22 @@ function M.n_toggle_permission(self)
   return function()
     local perm_cfg = config.values.views.finder.columns.permission
     perm_cfg.enabled = not perm_cfg.enabled
+    self:dispatch_refresh({ force_update = true })
+  end
+end
+
+---@param self Finder
+function M.n_toggle_details(self)
+  return function()
+    -- Toggle the inline permission and size text together. Both are real
+    -- buffer text, so flipping the flags and re-rendering is sufficient;
+    -- the resolver already treats a missing suffix as "column off".
+    local columns = config.values.views.finder.columns
+    local perm_cfg = columns.permission
+    local size_cfg = columns.size
+    local target = not ((perm_cfg and perm_cfg.enabled) or (size_cfg and size_cfg.enabled))
+    if perm_cfg then perm_cfg.enabled = target end
+    if size_cfg then size_cfg.enabled = target end
     self:dispatch_refresh({ force_update = true })
   end
 end

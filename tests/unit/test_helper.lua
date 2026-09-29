@@ -129,4 +129,61 @@ T["parse_name"]["returns name for new entry (no ref_id)"] = function()
   equal(helper_mod.parse_name(line), "new-file.txt")
 end
 
+-- ---------------------------------------------------------------------------
+-- size suffix ("<n>B" real text)
+-- ---------------------------------------------------------------------------
+
+T["size suffix"] = MiniTest.new_set({
+  hooks = {
+    pre_case = function()
+      local config = require("fyler.config")
+      -- Save current values (may be nil when no setup ran yet)
+      _G._test_helper_saved_values = config.values
+      config.values = {
+        views = { finder = { columns = { size = { enabled = true } } } },
+      }
+    end,
+    post_case = function()
+      require("fyler.config").values = _G._test_helper_saved_values
+      _G._test_helper_saved_values = nil
+    end,
+  },
+})
+
+T["size suffix"]["parse_permissions ignores trailing size"] = function()
+  local line = "  icon  /00030 my-file  rw-r--r--  11349B"
+  equal(helper_mod.parse_permissions(line), "rw-r--r--")
+end
+
+T["size suffix"]["parse_name strips trailing size"] = function()
+  local line = "  icon  /00031 my-file  rw-r--r--  11349B"
+  equal(helper_mod.parse_name(line), "my-file")
+end
+
+T["size suffix"]["parse_name keeps filename that looks like a size"] = function()
+  -- File named "100B" (200 bytes large): only the rendered suffix is stripped
+  local line = "  icon  /00032 100B  rw-r--r--  200B"
+  equal(helper_mod.parse_name(line), "100B")
+end
+
+T["size suffix"]["parse_is_directory handles size on files"] = function()
+  local line = "  icon  /00033 readme.md  rw-r--r--  42B"
+  equal(helper_mod.parse_is_directory(line), false)
+end
+
+T["size suffix"]["parse_is_directory handles directories without size"] = function()
+  local line = "  icon  /00034 my-dir/  rwxr-xr-x"
+  equal(helper_mod.parse_is_directory(line), true)
+end
+
+T["size suffix"]["parse_name leaves user-typed size-like names alone"] = function()
+  -- New entries (no ref_id) never carry a size suffix, so no stripping
+  equal(helper_mod.parse_name("  1B"), "1B")
+  equal(helper_mod.parse_name("  hello/"), "hello")
+end
+
+T["size suffix"]["strip_size_suffix is a no-op without suffix"] = function()
+  equal(helper_mod.strip_size_suffix("  icon  /00035 my-file  rw-r--r--"), "  icon  /00035 my-file  rw-r--r--")
+end
+
 return T

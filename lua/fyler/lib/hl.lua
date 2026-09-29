@@ -103,6 +103,7 @@ function M.setup()
     FylerGitIconUntracked = { link = "FylerGitUntracked" },
 
     FylerPermissions     = { fg = "#7C7F93" },
+    FylerSize            = { link = "Comment" },
 
     FylerWinPick         = { fg = palette.white, bg = palette.blue },
 

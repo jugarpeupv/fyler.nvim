@@ -33,6 +33,29 @@ local function get_permissions(path)
   return table.concat(p)
 end
 
+-- Returns file size in bytes, or nil for directories / missing stat.
+-- Rendered as real buffer text (not virtual text) so it is always visible.
+local function get_size_bytes(path)
+  if Path.new(path):is_directory() then return nil end
+
+  local stat = Path.new(path):stats()
+  if not stat then return nil end
+
+  return stat.size
+end
+
+-- Format raw bytes as "<n>B", or "" when there is no size (directories).
+local function format_size_bytes(bytes)
+  if not bytes or bytes < 0 then return "" end
+
+  return string.format("%dB", bytes)
+end
+
+local function size_enabled()
+  return config.values.views.finder.columns.size
+    and config.values.views.finder.columns.size.enabled
+end
+
 -- Convert a 9-char rwxrwxrwx string back to an integer mode (lower 9 bits).
 -- Returns nil if the string is not exactly 9 valid permission chars.
 local function perms_to_mode(perm_str, stat_type)
@@ -232,49 +255,10 @@ local columns = {
     end)
   end,
 
-  size = function(ctx, _, _next)
-    local function get_size(path)
-      if Path.new(path):is_directory() then return nil end
-
-      local stat = Path.new(path):stats()
-      if not stat then return nil end
-
-      return stat.size
-    end
-
-    local function format_size(bytes)
-      if not bytes or bytes < 0 then return "     -" end
-
-      local units = { "B", "K", "M", "G", "T" }
-      local unit_index = 1
-      local size = bytes
-
-      while size >= 1024 and unit_index < #units do
-        size = size / 1024
-        unit_index = unit_index + 1
-      end
-
-      local formatted
-      if unit_index == 1 then
-        formatted = string.format("%d%s", size, units[unit_index])
-      else
-        formatted = string.format("%.1f%s", size, units[unit_index])
-      end
-
-      return string.format("%6s", formatted)
-    end
-
-    local highlights, column = {}, {}
-
-    for i = 1, #ctx.entries do
-      table.insert(
-        column,
-        Text(nil, { virt_text = { { format_size(get_size(ctx.get_entry_data(i).path)), "Comment" } }, virt_text_pos = "eol" })
-      )
-    end
-
-    _next({ column = column, highlights = highlights })
-  end,
+  -- NOTE: size is rendered as real buffer text in the files Row
+  -- (see format_size_bytes), not as a virtual-text detail column, so there
+  -- is intentionally no `size` entry here. The `columns.size.enabled` flag
+  -- still controls whether the inline size text is shown.
 
   creation_time = function(ctx, _, _next)
     local column = {}
@@ -439,8 +423,15 @@ M.files = Component.new_async(function(node, onupdate)
     local perm_text = perm_enabled
       and Text("  " .. get_permissions(item.link or item.path), { highlight = "FylerPermissions", priority = 200 })
       or Text("")
-         local name_text = Text(item.name .. (item.type == "directory" and "/" or ""), { highlight = name_highlight })
-    table.insert(files_column, Row({ indentation_text, icon_text, ref_id_text, name_text, perm_text }))
+    local size_text = Text("")
+    if size_enabled() then
+      local size_str = format_size_bytes(get_size_bytes(item.link or item.path))
+      size_text = (size_str ~= "")
+        and Text("  " .. size_str, { highlight = "FylerSize" })
+        or Text("")
+    end
+          local name_text = Text(item.name .. (item.type == "directory" and "/" or ""), { highlight = name_highlight })
+    table.insert(files_column, Row({ indentation_text, icon_text, ref_id_text, name_text, perm_text, size_text }))
   end
 
   -- First pass: render the file tree immediately so the buffer is populated
@@ -499,8 +490,15 @@ M.refresh_details = function(node, onupdate)
     local perm_text = perm_enabled
       and Text("  " .. get_permissions(item.link or item.path), { highlight = "FylerPermissions", priority = 200 })
       or Text("")
+    local size_text = Text("")
+    if size_enabled() then
+      local size_str = format_size_bytes(get_size_bytes(item.link or item.path))
+      size_text = (size_str ~= "")
+        and Text("  " .. size_str, { highlight = "FylerSize" })
+        or Text("")
+    end
      local name_text = Text(item.name .. (item.type == "directory" and "/" or ""), { highlight = name_highlight })
-    table.insert(files_column, Row({ indentation_text, icon_text, ref_id_text, name_text, perm_text }))
+    table.insert(files_column, Row({ indentation_text, icon_text, ref_id_text, name_text, perm_text, size_text }))
   end
 
   collect_and_render_details(
