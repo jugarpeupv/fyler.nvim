@@ -38,6 +38,9 @@ This fork ([jugarpeupv/fyler.nvim](https://github.com/jugarpeupv/fyler.nvim)) bu
 - **`ToggleDetails` action** — show/hide the permissions and size text together.
 - **`SelectIfDirectory` action** — runs `Select` on directories, falls through to
   the builtin motion on files.
+- **Executable files stand out** — files with any execute bit show a console
+  icon with the `FylerExecutable` highlight (which prefers oil.nvim's
+  `OilExecutable` when defined, green otherwise).
 - **Smart `b` motion** — from the filename start, `b` jumps to the previous
   line's size instead of getting stuck in the concealed ref-id.
 - **Splits keep fyler open** — `SelectVSplit`/`SelectSplit` no longer wipe the

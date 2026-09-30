@@ -103,6 +103,7 @@ function M.setup()
     FylerGitIconUntracked = { link = "FylerGitUntracked" },
 
     FylerPermissions     = { fg = "#7C7F93" },
+
     FylerSize            = { link = "Comment" },
 
     FylerWinPick         = { fg = palette.white, bg = palette.blue },
@@ -125,6 +126,22 @@ function M.setup()
 
   for k, v in pairs(hl_groups) do
     vim.api.nvim_set_hl(0, k, vim.tbl_extend("keep", v, { default = true }))
+  end
+
+  -- Executable files use FylerExecutable, which prefers oil.nvim's
+  -- OilExecutable when defined and falls back to green otherwise.
+  -- Re-evaluated on every setup (including ColorScheme) so a later-loading
+  -- oil still takes over. M._exec_link tracks the link installed by us so
+  -- re-setup can switch targets without clobbering a user-defined group:
+  -- anything else found there is left alone.
+  local want = vim.fn.hlexists("OilExecutable") == 1 and "OilExecutable" or "FylerGreen"
+  local current = vim.api.nvim_get_hl(0, { name = "FylerExecutable" })
+  if M._exec_link == nil and next(current) == nil then
+    vim.api.nvim_set_hl(0, "FylerExecutable", { link = want })
+    M._exec_link = want
+  elseif M._exec_link ~= nil and current.link == M._exec_link and want ~= M._exec_link then
+    vim.api.nvim_set_hl(0, "FylerExecutable", { link = want })
+    M._exec_link = want
   end
 end
 

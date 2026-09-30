@@ -130,10 +130,27 @@ local function flatten_tree(node, depth, result)
   return result
 end
 
----@return string|nil, string|nil
+-- Glyph shown for executable files, regardless of the icon provider.
+-- Written as a codepoint (not a literal) so tooling cannot mangle it.
+-- U+F489 = nf-md-console. Override with views.finder.icon.executable.
+local EXEC_ICON = vim.fn.nr2char(0xF489)
+
+---Whether the entry is an executable file (any of the owner/group/other
+---execute bits set). Directories are never treated as executable.
+---@param item table
+---@return boolean
+local function is_executable(item)
+  if item.type == "directory" then return false end
+  local stat = Path.new(item.link or item.path):stats()
+  if not stat or not stat.mode then return false end
+  local perm = stat.mode % 512
+  return perm % 2 == 1 or math.floor(perm / 8) % 2 == 1 or math.floor(perm / 64) % 2 == 1
+end
+
+---@return string|nil, string|nil, boolean
 local function icon_and_hl(item)
   local icon, hl = config.icon_provider(item.type, item.path)
-  if config.values.integrations.icon == "none" then return icon, hl end
+  if config.values.integrations.icon == "none" then return icon, hl, false end
 
   if item.type == "directory" then
     local icons = config.values.views.finder.icon
@@ -142,9 +159,15 @@ local function icon_and_hl(item)
     icon = is_empty and icons.directory_empty
       or (is_expanded and icons.directory_expanded or icons.directory_collapsed)
       or icon
+    return icon, hl, false
   end
 
-  return icon, hl
+  if is_executable(item) then
+    local icons = config.values.views.finder.icon
+    return icons.executable or EXEC_ICON, "FylerExecutable", true
+  end
+
+  return icon, hl, false
 end
 
 local function create_column_context(tag, node, flattened_entries, files_column)
@@ -408,13 +431,15 @@ M.files = Component.new_async(function(node, onupdate)
 
   for _, entry in ipairs(flattened_entries) do
     local item, depth = entry.item, entry.depth
-    local icon, hl = icon_and_hl(item)
+    local icon, hl, is_exec = icon_and_hl(item)
     local icon_highlight = (item.type == "directory") and "FylerFSDirectoryIcon" or hl
     -- Use the cached highlight from the last Pass 2 if available; this ensures
     -- ignored/modified/staged files are already styled in Pass 1 so they never
     -- flash as unstyled text before the async git column arrives.
+    -- Git status wins over the executable styling when both apply.
     local name_highlight = M.highlight_cache[item.ref_id]
       or ((item.type == "directory") and "FylerFSDirectoryName" or nil)
+      or (is_exec and "FylerExecutable" or nil)
     icon = icon and (icon .. "  ") or ""
 
     local indentation_text = Text(string.rep(" ", 2 * depth))
@@ -479,9 +504,12 @@ M.refresh_details = function(node, onupdate)
 
   for _, entry in ipairs(flattened_entries) do
     local item, depth = entry.item, entry.depth
-    local icon, hl = icon_and_hl(item)
+    local icon, hl, is_exec = icon_and_hl(item)
     local icon_highlight = (item.type == "directory") and "FylerFSDirectoryIcon" or hl
-    local name_highlight = (item.type == "directory") and "FylerFSDirectoryName" or nil
+    -- NOTE: no highlight_cache read here on purpose — the cache is cleared
+    -- and rewritten below, so reading it would re-apply stale highlights.
+    local name_highlight = ((item.type == "directory") and "FylerFSDirectoryName" or nil)
+      or (is_exec and "FylerExecutable" or nil)
     icon = icon and (icon .. "  ") or ""
 
     local indentation_text = Text(string.rep(" ", 2 * depth))
