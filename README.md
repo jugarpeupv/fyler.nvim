@@ -1,60 +1,59 @@
 <div align="center">
   <h1>Fyler.nvim</h1>
-  <table>
-    <tr>
-      <td>
-        <strong>A file manager for <a href="https://neovim.io">Neovim</a></strong>
-      </td>
-    </tr>
-  </table>
-  <div>
-    <img
-      alt="License"
-      src="https://img.shields.io/github/license/A7Lavinraj/fyler.nvim?style=for-the-badge&logo=starship&color=ee999f&logoColor=D9E0EE&labelColor=302D41"
-    />
-    <img
-      alt="Stars"
-      src="https://img.shields.io/github/stars/A7Lavinraj/fyler.nvim?style=for-the-badge&logo=starship&color=c69ff5&logoColor=D9E0EE&labelColor=302D41"
-    />
-  </div>
+    Best file manager for neovim, edit your filesystem the vim way, like a normal neovim buffer
 </div>
 
 <br>
 
 <div align="center">
   <img
-    width="1920"
-    height="1080"
     alt="image"
-    src="https://github.com/user-attachments/assets/036ebf84-0053-4930-ae91-c0ae95bb417d"
+    src="assets/demo_image.png"
   />
 </div>
 
+## Demo
+
+A detailed walkthrough of this fork and its features:
+
+[![Best neovim file tree explorer](https://img.youtube.com/vi/bwq8AVIh2QY/0.jpg)](https://www.youtube.com/watch?v=bwq8AVIh2QY)
+
+## What's different from upstream
+
+This fork ([jugarpeupv/fyler.nvim](https://github.com/jugarpeupv/fyler.nvim)) builds on
+[A7Lavinraj/fyler.nvim](https://github.com/A7Lavinraj/fyler.nvim) with:
+
+> [!NOTE]
+> Some of this features might already be implemented in upstream
+
+- **Support operations in multiple independent instances** — `require("fyler").open({ dir = ... })` opens
+  a second directory in its own instance instead of hijacking the first buffer.
+- **Permissions rendered as real editable text** — edit the `rwxr--r--`
+  string inline and `:w` to chmod; invalid values warn and restore.
+- **Inline size column rendered as real text** — file sizes render as real buffer text (`11349B`) with
+  their own `FylerSize` highlight group. Edits to it are ignored and restored.
+- **Editable cwd header with `../` navigation** — the first line shows the
+  current directory as real text (edit it and press `<CR>` to jump there),
+  and pressing `<CR>` on the `../` second line goes to the parent directory.
+- **`ToggleDetails` action** — show/hide the permissions and size text together.
+- **`SelectIfDirectory` action** — runs `Select` on directories, falls through to
+  the builtin motion on files.
+- **Smart `b` motion** — from the filename start, `b` jumps to the previous
+  line's size instead of getting stuck in the concealed ref-id.
+- **Splits keep fyler open** — `SelectVSplit`/`SelectSplit` no longer wipe the
+  fyler pane, and toggling/closing in a multi-split `replace` layout closes the
+  pane instead of swapping in a stale buffer.
+- **Reliable `:e` / `:w`** — `:e` reloads the view instead of blanking the
+  buffer, and a write handler is always present (no `E676`).
+- **Cross-device moves** — `EXDEV` falls back to copy + delete, and paste targets the directory under the cursor.
+- **Trash without double confirmation** — a missing or failing macOS trash
+  backend deletes permanently directly; already-trashed files count as success.
+
 ## Installation
 
-> [!IMPORTANT]
->
-> Both **Stable** and **Latest** versions are explained on the
-> [WIKI PAGE](https://github.com/A7Lavinraj/fyler.nvim/wiki/installation) in details.
-
-#### Stable
-
 ```lua
 {
-  "A7Lavinraj/fyler.nvim",
-  dependencies = { "nvim-mini/mini.icons" },
-  branch = "stable",  -- Use stable branch for production
-  lazy = false, -- Necessary for `default_explorer` to work properly
-  opts = {}
-}
-```
-
-#### Latest
-
-```lua
-{
-  "A7Lavinraj/fyler.nvim",
-  dependencies = { "nvim-mini/mini.icons" },
+  "jugarpeupv/fyler.nvim",
   lazy = false, -- Necessary for `default_explorer` to work properly
   opts = {}
 }
