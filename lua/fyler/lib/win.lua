@@ -461,7 +461,20 @@ function Win:show()
 end
 
 function Win:hide()
-  if self.kind:match("^replace") then
+  -- In `replace` mode fyler took over an existing window, so hiding normally
+  -- restores that window's previous buffer. But when fyler's window is one of
+  -- several splits (e.g. files were opened beside it with SelectVSplit),
+  -- restoring would show a stale buffer in fyler's pane instead of removing
+  -- it — close the window instead.
+  local tab_wins = {}
+  if self:has_valid_winid() then
+    for _, wid in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+      if vim.api.nvim_win_is_valid(wid) and vim.api.nvim_win_get_config(wid).relative == "" then
+        table.insert(tab_wins, wid)
+      end
+    end
+  end
+  if self.kind:match("^replace") and #tab_wins <= 1 then
     -- Restore original window options before switching buffers, so the opened
     -- file respects the user's settings (e.g. relativenumber, cursorline).
     if self._saved_win_opts and self:has_valid_winid() then

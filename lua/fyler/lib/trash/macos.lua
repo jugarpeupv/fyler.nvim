@@ -5,35 +5,17 @@ local M = {}
 function M.dump(opts, _next)
   local abspath = Path.new(opts.path):os_path()
 
-  local async = require("fyler.lib.async")
-  local get_confirmation = async.wrap(
-    vim.schedule_wrap(function(...) require("fyler.input").confirm.open(...) end)
-  )
-
-  -- Ask "permanently delete instead?" with the given reason lines.
-  -- "y" deletes permanently; "n" reports success silently so the file
-  -- stays on disk and the view refresh restores its line (true cancel).
-  local function ask_permanent(reason_lines)
-    local message = {}
-    vim.list_extend(message, reason_lines)
-    table.insert(message, "  Permanently delete instead?  ")
-    table.insert(message, "  " .. abspath .. "  ")
-    -- NOTE: async.void executes immediately and returns nothing,
-    -- so it must NOT be called with a trailing ().
-    async.void(function()
-      local confirmed = get_confirmation(message)
-      if confirmed then
-        require("fyler.lib.fs").delete({ path = opts.path }, _next)
-      else
-        pcall(_next)
-      end
-    end)
+  -- Permanently delete without asking again: the delete operation itself
+  -- was already confirmed, so a missing/failing trash backend must not
+  -- produce a second confirmation dialog.
+  local function delete_permanently()
+    require("fyler.lib.fs").delete({ path = opts.path }, _next)
   end
 
   -- /usr/bin/trash only exists on macOS 15+. Without it there is no
-  -- trash to fall back from, so ask directly instead of asserting.
+  -- trash to fall back from, so delete directly instead of asserting.
   if vim.fn.executable("/usr/bin/trash") ~= 1 then
-    ask_permanent({ "  Trash is not available on this system.  " })
+    delete_permanently()
     return
   end
 
@@ -59,18 +41,7 @@ function M.dump(opts, _next)
           return
         end
 
-        -- Extract the volume name from the macOS error string, e.g.:
-        --   "the volume "pCloud Drive" doesn't have one."
-        local volume = stderr:match('volume "([^"]+)"') or "this volume"
-
-        local lines = {
-          string.format('  Trash is not supported on "%s".  ', volume),
-        }
-        -- Include the real stderr so the actual reason is diagnosable.
-        stderr = stderr:gsub("%s+$", "")
-        if stderr ~= "" then table.insert(lines, "  " .. stderr .. "  ") end
-
-        ask_permanent(lines)
+        delete_permanently()
       end
     end)
   end)
