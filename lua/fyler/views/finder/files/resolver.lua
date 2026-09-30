@@ -62,22 +62,9 @@ function Resolver:_parse_buffer()
       ))
     end
 
-    -- Validate: the size column is real buffer text ("<n>B") that users
-    -- must not edit.  When enabled, every existing non-directory entry must
-    -- still carry a well-formed size suffix; directories never render one.
-    -- Tampering aborts so the caller rerenders the original values back.
-    local size_enabled = config.values.views.finder.columns.size
-      and config.values.views.finder.columns.size.enabled
-    if size_enabled and entry_ref_id and not line:match("%s+%d+B%s*$") then
-      local old_entry = manager.get(entry_ref_id)
-      if not old_entry or old_entry.type ~= "directory" then
-        local after_ref = line:match("/%d+ (.*)$") or ""
-        error(string.format(
-          "Invalid size string in %q – expected '<bytes>B' at end of line",
-          after_ref
-        ))
-      end
-    end
+    -- NOTE: anything after the permission block (the editable size text)
+    -- is ignored by the parsers above, so size modifications never produce
+    -- actions and never warn — the next refresh restores the original text.
 
     while parent_stack:size() > 1 and parent_stack:top().indent >= entry_indent do
       parent_stack:pop()

@@ -14,20 +14,20 @@ local equal = MiniTest.expect.equality
 T["parse_permissions"] = MiniTest.new_set()
 
 T["parse_permissions"]["returns perm string for valid line"] = function()
-  -- Typical buffer line with a 9-char perm block followed by a space
-  local line = "  icon  /00001 rw-r--r-- my-file"
+  -- Real render order: /NNNNN name, then the 9-char perm block
+  local line = "  icon  /00001 my-file  rw-r--r--"
   equal(helper_mod.parse_permissions(line), "rw-r--r--")
 end
 
-T["parse_permissions"]["returns nil when 10th char is not space"] = function()
-  -- 9 valid chars but immediately followed by a letter (filename runs into perm)
-  local line = "  icon  /00001 rw-r--r--my-file"
+T["parse_permissions"]["returns nil when perm is glued to trailing text"] = function()
+  -- 9 valid chars but immediately followed by a letter instead of whitespace
+  local line = "  icon  /00001 my-file  rw-r--r--x"
   equal(helper_mod.parse_permissions(line), nil)
 end
 
 T["parse_permissions"]["returns nil when perm chars are invalid"] = function()
   -- Contains 'z' which is not [rwx-]
-  local line = "  icon  /00001 rw-r--r-z my-file"
+  local line = "  icon  /00001 my-file  rw-r--r-z"
   equal(helper_mod.parse_permissions(line), nil)
 end
 
@@ -42,18 +42,18 @@ T["parse_permissions"]["returns nil for empty line"] = function()
 end
 
 T["parse_permissions"]["returns perm string of all dashes"] = function()
-  local line = "  icon  /00002 --------- some-file"
+  local line = "  icon  /00002 some-file  ---------"
   equal(helper_mod.parse_permissions(line), "---------")
 end
 
 T["parse_permissions"]["returns perm string of all rwx"] = function()
-  local line = "  icon  /00003 rwxrwxrwx exec-file"
+  local line = "  icon  /00003 exec-file  rwxrwxrwx"
   equal(helper_mod.parse_permissions(line), "rwxrwxrwx")
 end
 
 T["parse_permissions"]["returns nil when perm block is only 8 chars"] = function()
-  -- Only 8 permission characters (too short), no trailing space at position 10
-  local line = "  icon  /00004 rw-r--r- my-file"
+  -- Only 8 permission characters (too short)
+  local line = "  icon  /00004 my-file  rw-r--r-"
   equal(helper_mod.parse_permissions(line), nil)
 end
 
@@ -74,12 +74,12 @@ T["parse_is_directory"]["returns false for new entry without trailing slash"] = 
 end
 
 T["parse_is_directory"]["returns true for ref_id entry with perm and trailing slash"] = function()
-  local line = "  icon  /00010 rwxr-xr-x apps/"
+  local line = "  icon  /00010 apps/  rwxr-xr-x"
   equal(helper_mod.parse_is_directory(line), true)
 end
 
 T["parse_is_directory"]["returns false for ref_id entry with perm and no trailing slash"] = function()
-  local line = "  icon  /00011 rw-r--r-- readme.md"
+  local line = "  icon  /00011 readme.md  rw-r--r--"
   equal(helper_mod.parse_is_directory(line), false)
 end
 
@@ -105,12 +105,12 @@ end
 T["parse_name"] = MiniTest.new_set()
 
 T["parse_name"]["strips trailing slash from directory name"] = function()
-  local line = "  icon  /00020 rwxr-xr-x apps/"
+  local line = "  icon  /00020 apps/  rwxr-xr-x"
   equal(helper_mod.parse_name(line), "apps")
 end
 
 T["parse_name"]["preserves filename without trailing slash"] = function()
-  local line = "  icon  /00021 rw-r--r-- file.txt"
+  local line = "  icon  /00021 file.txt  rw-r--r--"
   equal(helper_mod.parse_name(line), "file.txt")
 end
 
@@ -182,8 +182,16 @@ T["size suffix"]["parse_name leaves user-typed size-like names alone"] = functio
   equal(helper_mod.parse_name("  hello/"), "hello")
 end
 
-T["size suffix"]["strip_size_suffix is a no-op without suffix"] = function()
-  equal(helper_mod.strip_size_suffix("  icon  /00035 my-file  rw-r--r--"), "  icon  /00035 my-file  rw-r--r--")
+T["size suffix"]["tampered size is ignored, perms still parsed"] = function()
+  -- User edited "991B" into "991sdfpi": name and perms must still resolve,
+  -- the trailing junk is never validated and never produces actions.
+  local line = "  icon  /00035 deploy-packages.sh  rwxr-xr-x  991sdfpi"
+  equal(helper_mod.parse_name(line), "deploy-packages.sh")
+  equal(helper_mod.parse_permissions(line), "rwxr-xr-x")
+end
+
+T["size suffix"]["parse_name without size suffix still works"] = function()
+  equal(helper_mod.parse_name("  icon  /00036 my-file  rw-r--r--"), "my-file")
 end
 
 return T

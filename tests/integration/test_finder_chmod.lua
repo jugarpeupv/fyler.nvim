@@ -119,19 +119,18 @@ T["Chmod"]["Invalid Perm String Shows Warning And Rerenders"] = function()
   nvim.forward_lua("require('fyler').open")({ dir = path, kind = "replace" })
   vim.uv.sleep(30)
 
-  -- Corrupt the permission field so it is only 5 chars (invalid)
+  -- Corrupt the permission field by replacing its first character with 'b'
+  -- (invalid), keeping the size suffix intact so only perm validation trips
   local lines = nvim.get_lines(0, 0, -1, false)
   local new_lines = {}
   for _, line in ipairs(lines) do
     if line:find("guarded%-file") then
-      -- Overwrite only the perm block characters with a too-short string
-      local prefix, rest = line:match("^(.*/%d+ )(.*)$")
-      if prefix then
-        -- Replace the valid 10-char perm+space block with garbage
-        table.insert(new_lines, prefix .. "bad  rwx " .. rest:sub(11))
-      else
-        table.insert(new_lines, line)
-      end
+      local corrupted = line:gsub(
+        "  ([rwx%-])([rwx%-][rwx%-][rwx%-][rwx%-][rwx%-][rwx%-][rwx%-][rwx%-]%s)",
+        "  b%2",
+        1
+      )
+      table.insert(new_lines, corrupted)
     else
       table.insert(new_lines, line)
     end
