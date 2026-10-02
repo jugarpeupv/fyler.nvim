@@ -60,6 +60,7 @@ local DEPRECATION_RULES = {
 ---| "CollapseAll"
 ---| "CollapseNode"
 ---| "ToggleDetails"
+---| "TogglePreview"
 ---| "SetCwdHere"
 ---| "SetCwdToParent"
 ---| "SetCwdToNode"
@@ -251,6 +252,7 @@ function config.defaults()
           ["gC"] = "SortByCreationTime",
           ["gv"] = "OpenSecondaryVSplit",
           ["gs"] = "OpenSecondaryHSplit",
+          ["<C-p>"] = "TogglePreview",
         },
         -- Defines key mapping options
         mappings_opts = {

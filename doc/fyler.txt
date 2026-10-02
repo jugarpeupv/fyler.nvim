@@ -274,6 +274,8 @@ Available actions:
   CollapseNode          Collapse the directory node under the cursor.
   TogglePermissions     Toggle the inline permissions column on/off.
   ToggleDetails         Toggle the inline permissions and size text on/off.
+  TogglePreview         Toggle a vsplit preview following the cursor
+                        (text, directory listing, or image via image.nvim).
   VisualYankEntries     (visual mode) Mark all entries in the visual
                         selection for copy. Writes to the system clipboard
                         (+) in fyler's format. Works across Neovim instances.

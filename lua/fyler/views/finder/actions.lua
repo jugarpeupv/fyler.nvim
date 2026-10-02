@@ -394,6 +394,234 @@ function M.n_toggle_details(self)
   end
 end
 
+-- ---------------------------------------------------------------------------
+-- Preview: vsplit window following the cursor (TogglePreview, `<C-p>`)
+-- ---------------------------------------------------------------------------
+
+local PREVIEW_MAX_BYTES = 256 * 1024 -- never read more than this for text preview
+local PREVIEW_MAX_LINES = 200 -- max lines shown for text preview
+local PREVIEW_DEBOUNCE_MS = 100 -- CursorMoved coalescing window while scrolling
+local PREVIEW_IDLE_MS = 400 -- gap after which the next move renders almost immediately
+local PREVIEW_IDLE_DEBOUNCE_MS = 15 -- delay when stepping slowly (user is looking)
+local PREVIEW_MAX_DIR_ENTRIES = 100 -- max children listed for directories
+
+local PREVIEW_IMAGE_EXTS = {
+  png = true,
+  jpg = true,
+  jpeg = true,
+  gif = true,
+  webp = true,
+  bmp = true,
+  ico = true,
+  avif = true,
+  tif = true,
+  tiff = true,
+  svg = true,
+}
+
+local function preview_set_lines(bufnr, lines, filetype)
+  if not vim.api.nvim_buf_is_valid(bufnr) then return end
+  vim.bo[bufnr].modifiable = true
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
+  vim.bo[bufnr].modifiable = false
+  if filetype and filetype ~= "" and vim.bo[bufnr].filetype ~= filetype then
+    pcall(function() vim.bo[bufnr].filetype = filetype end)
+  elseif not filetype and vim.bo[bufnr].filetype ~= "" then
+    vim.bo[bufnr].filetype = ""
+  end
+end
+
+---Close the preview window, clear any image, wipe the scratch buffer and
+---drop the cursor tracker. Safe to call when nothing is open.
+---@param self Finder
+function M.close_preview(self)
+  local pv = self.preview
+  if not pv then return end
+  self.preview = nil
+  if pv.au_group then pcall(vim.api.nvim_del_augroup_by_id, pv.au_group) end
+  if pv.image then pcall(function() pv.image:clear() end) end
+  if pv.winid and vim.api.nvim_win_is_valid(pv.winid) then
+    pcall(vim.api.nvim_win_close, pv.winid, true)
+  end
+  if pv.bufnr and vim.api.nvim_buf_is_valid(pv.bufnr) then
+    pcall(vim.api.nvim_buf_delete, pv.bufnr, { force = true })
+  end
+end
+
+local function preview_show_dir(pv, path)
+  if pv.image then
+    pcall(function() pv.image:clear() end)
+    pv.image = nil
+  end
+  local entries = {}
+  local fs = vim.uv.fs_scandir(path)
+  if fs then
+    while #entries < PREVIEW_MAX_DIR_ENTRIES do
+      local name, fs_type = vim.uv.fs_scandir_next(fs)
+      if not name then break end
+      table.insert(entries, name .. (fs_type == "directory" and "/" or ""))
+    end
+  end
+  table.sort(entries)
+  if #entries == 0 then entries = { "[empty directory]" } end
+  preview_set_lines(pv.bufnr, entries)
+end
+
+local function preview_show_text(pv, path)
+  if pv.image then
+    pcall(function() pv.image:clear() end)
+    pv.image = nil
+  end
+  local lines
+  local stat = vim.uv.fs_stat(path)
+  if not stat then
+    lines = { "[cannot stat file]" }
+  elseif stat.size > PREVIEW_MAX_BYTES then
+    lines = { string.format("[file too large: %d bytes]", stat.size) }
+  else
+    -- Binary sniff on the first chunk before reading text.
+    local is_binary = false
+    local fd = vim.uv.fs_open(path, "r", 438)
+    if fd then
+      local data = vim.uv.fs_read(fd, 8192, 0)
+      vim.uv.fs_close(fd)
+      if data and data:find("\0", 1, true) then is_binary = true end
+    end
+    if is_binary then
+      lines = { "[binary file]" }
+    else
+      local ok, read = pcall(vim.fn.readfile, path, "", PREVIEW_MAX_LINES)
+      if ok and read and #read > 0 then
+        lines = read
+      else
+        lines = { "[empty file]" }
+      end
+    end
+  end
+  local ft = vim.filetype.match({ filename = path })
+  preview_set_lines(pv.bufnr, lines, ft)
+end
+
+local function preview_show_image(pv, winid, path)
+  local ok_api, image_api = pcall(require, "image")
+  if not ok_api or not image_api or not image_api.from_file then
+    if pv.image then
+      pcall(function() pv.image:clear() end)
+      pv.image = nil
+    end
+    preview_set_lines(pv.bufnr, { "[image preview needs image.nvim enabled]" })
+    return
+  end
+  -- Blank the text first; the image renders on top of the buffer area.
+  preview_set_lines(pv.bufnr, {})
+  if pv.image then
+    pcall(function() pv.image:clear() end)
+    pv.image = nil
+  end
+  local ok_img, img = pcall(image_api.from_file, path, { window = winid, buffer = pv.bufnr, x = 0, y = 0 })
+  if not ok_img or not img then
+    preview_set_lines(pv.bufnr, { "[cannot preview image]" })
+    return
+  end
+  local ok_render = pcall(function() img:render() end)
+  if not ok_render then
+    preview_set_lines(pv.bufnr, { "[cannot preview image]" })
+    return
+  end
+  pv.image = img
+end
+
+local function preview_is_image(path)
+  local ext = path:match("%.([^./]+)$")
+  return ext and PREVIEW_IMAGE_EXTS[ext:lower()] or false
+end
+
+---Render the entry under the cursor into an already-open preview window.
+---@param self Finder
+local function preview_update(self)
+  local pv = self.preview
+  if not pv then return end
+  if not (pv.winid and vim.api.nvim_win_is_valid(pv.winid)) then
+    -- Preview was closed manually (e.g. :q): drop state on next tick so we
+    -- never delete an augroup from inside its own callback.
+    vim.schedule(function() M.close_preview(self) end)
+    return
+  end
+  local entry = self:cursor_node_entry()
+  if not entry then
+    -- Header/"../" row: show the current directory listing.
+    preview_show_dir(pv, self:getcwd())
+    return
+  end
+  local path = entry.link or entry.path
+  if entry.type == "directory" then
+    preview_show_dir(pv, path)
+  elseif preview_is_image(path) then
+    preview_show_image(pv, pv.winid, path)
+  else
+    preview_show_text(pv, path)
+  end
+end
+
+---@param self Finder
+function M.n_toggle_preview(self)
+  return function()
+    if self.preview and self.preview.winid and vim.api.nvim_win_is_valid(self.preview.winid) then
+      M.close_preview(self)
+      return
+    end
+    -- Drop stale state (e.g. preview was closed manually) without touching windows.
+    if self.preview then
+      local pv = self.preview
+      self.preview = nil
+      if pv.au_group then pcall(vim.api.nvim_del_augroup_by_id, pv.au_group) end
+      if pv.image then pcall(function() pv.image:clear() end) end
+    end
+    if not (self.win and self.win:has_valid_winid() and self.win:has_valid_bufnr()) then return end
+    vim.cmd("vsplit")
+    local winid = vim.api.nvim_get_current_win()
+    local bufnr = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_win_set_buf(winid, bufnr)
+    vim.wo[winid].number = false
+    vim.wo[winid].signcolumn = "no"
+    vim.wo[winid].winfixwidth = true
+    vim.bo[bufnr].buftype = "nofile"
+    vim.bo[bufnr].bufhidden = "hide"
+    vim.bo[bufnr].swapfile = false
+    vim.bo[bufnr].modifiable = false
+    pcall(vim.api.nvim_buf_set_name, bufnr, "[fyler-preview:" .. bufnr .. "]")
+    self.preview = { winid = winid, bufnr = bufnr, image = nil, gen = 0 }
+    local group = vim.api.nvim_create_augroup("fyler_preview_" .. bufnr, { clear = true })
+    self.preview.au_group = group
+    vim.api.nvim_create_autocmd("CursorMoved", {
+      group = group,
+      buffer = self.win.bufnr,
+      callback = function()
+        local pv = self.preview
+        if not pv then return end
+        pv.gen = pv.gen + 1
+        local gen = pv.gen
+        -- Adaptive debounce: when stepping slowly (idle gap behind us) the
+        -- image conversion (~0.2-0.9s for photos) dominates anyway, so start
+        -- almost immediately; while scrolling fast, coalesce so intermediate
+        -- conversions never start. Stale generations are always dropped.
+        local now = vim.uv.hrtime()
+        local delay = ((now - (pv.last_kick or 0)) / 1e6 > PREVIEW_IDLE_MS)
+            and PREVIEW_IDLE_DEBOUNCE_MS
+          or PREVIEW_DEBOUNCE_MS
+        pv.last_kick = now
+        vim.defer_fn(function()
+          if not self.preview or self.preview.gen ~= gen then return end
+          pcall(preview_update, self)
+        end, delay)
+      end,
+    })
+    preview_update(self)
+    -- Return focus to fyler so motion keys keep working.
+    if self.win:has_valid_winid() then vim.api.nvim_set_current_win(self.win.winid) end
+  end
+end
+
 function M.n_sort_creation_time(self)
   return function()
     local ui = require("fyler.views.finder.ui")

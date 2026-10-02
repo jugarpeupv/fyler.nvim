@@ -154,6 +154,7 @@ function Finder:open(kind)
       [rev_maps["SelectTab"]]          = self:action "n_select_tab",
       [rev_maps["SelectVSplit"]]       = self:action "n_select_v_split",
       [rev_maps["TogglePermissions"]]       = self:action "n_toggle_permission",
+      [rev_maps["TogglePreview"]]           = self:action "n_toggle_preview",
       [rev_maps["ToggleDetails"]]           = self:action "n_toggle_details",
       [rev_maps["PasteEntry"]]              = self:action "n_paste",
       [rev_maps["SortByCreationTime"]]      = self:action "n_sort_creation_time",
@@ -322,6 +323,7 @@ end
 
 function Finder:close()
   require("fyler.views.finder.clipboard").clear(self)
+  require("fyler.views.finder.actions").close_preview(self)
   if self.win then self.win:hide() end
   -- Free the slot so it can be reused by the next secondary
   if self.slot and self.slot ~= 1 then
