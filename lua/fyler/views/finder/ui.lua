@@ -133,7 +133,7 @@ end
 -- Glyph shown for executable files, regardless of the icon provider.
 -- Written as a codepoint (not a literal) so tooling cannot mangle it.
 -- U+F489 = nf-md-console. Override with views.finder.icon.executable.
-local EXEC_ICON = vim.fn.nr2char(0xF489)
+local EXEC_ICON = vim.fn.nr2char(0xE795)
 
 ---Whether the entry is an executable file (any of the owner/group/other
 ---execute bits set). Directories are never treated as executable.
