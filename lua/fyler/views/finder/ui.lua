@@ -341,8 +341,16 @@ local function collect_and_render_details(tag, context, files_column, oncollect)
         if row and row.children then
           local name_component = row.children[4]
           if name_component then
+            -- Executable styling wins: never overwrite an executable file's
+            -- name with a detail (git) highlight.
+            local entry = context.entries[index]
+            local item = entry and entry.item
+            if item and item.type ~= "directory" and is_executable(item) then
+              goto continue_name
+            end
             name_component.option = name_component.option or {}
             name_component.option.highlight = highlight
+            ::continue_name::
           end
         end
       end
@@ -436,10 +444,10 @@ M.files = Component.new_async(function(node, onupdate)
     -- Use the cached highlight from the last Pass 2 if available; this ensures
     -- ignored/modified/staged files are already styled in Pass 1 so they never
     -- flash as unstyled text before the async git column arrives.
-    -- Git status wins over the executable styling when both apply.
-    local name_highlight = M.highlight_cache[item.ref_id]
-      or ((item.type == "directory") and "FylerFSDirectoryName" or nil)
+    -- Executable styling wins over git status for names when both apply.
+    local name_highlight = ((item.type == "directory") and "FylerFSDirectoryName" or nil)
       or (is_exec and "FylerExecutable" or nil)
+      or M.highlight_cache[item.ref_id]
     icon = icon and (icon .. "  ") or ""
 
     local indentation_text = Text(string.rep(" ", 2 * depth))
