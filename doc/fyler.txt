@@ -266,6 +266,7 @@ Available actions:
   SelectIfDirectory   Like Select on directories, builtin motion otherwise.
   SelectTab             Open file in a new tab.
   SelectVSplit          Open file in a vertical split.
+  ShowHelp              Show this keymap help in a floating pane.
   SelectSplit           Open file in a horizontal split.
   GotoParent            Navigate to the parent directory.
   GotoCwd               Navigate to the current working directory.
@@ -273,7 +274,11 @@ Available actions:
   CollapseAll           Collapse all open directory nodes.
   CollapseNode          Collapse the directory node under the cursor.
   TogglePermissions     Toggle the inline permissions column on/off.
-  ToggleDetails         Toggle the inline permissions and size text on/off.
+  ToggleSize            Toggle the inline size text on/off.
+  ToggleDetails         Toggle all inline metadata (permissions, size
+                        and date) on/off: hides them if any is shown,
+                        shows them if all are hidden.
+  ToggleCreationTime    Toggle the inline date column on/off.
   TogglePreview         Toggle a vsplit preview following the cursor
                         (text, directory listing, or image via image.nvim).
   VisualYankEntries     (visual mode) Mark all entries in the visual

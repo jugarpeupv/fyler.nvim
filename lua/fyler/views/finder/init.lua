@@ -13,8 +13,8 @@ local global_cwd = nil
 -- Instance registry: slot (integer) → Finder object.
 -- Declared here so all Finder methods defined below can close over it.
 local MAX_INSTANCES = 2
-local ORIG_SLOT     = 1
-local instances     = {}
+local ORIG_SLOT = 1
+local instances = {}
 
 ---Internal helper to update global CWD during navigation (for winbar sync)
 ---@param path string
@@ -152,10 +152,13 @@ function Finder:open(kind)
       [rev_maps["SelectIfDirectory"]] = self:action "n_select_if_directory",
       [rev_maps["SelectSplit"]]        = self:action "n_select_split",
       [rev_maps["SelectTab"]]          = self:action "n_select_tab",
+      [rev_maps["ShowHelp"]]           = self:action "n_show_help",
       [rev_maps["SelectVSplit"]]       = self:action "n_select_v_split",
       [rev_maps["TogglePermissions"]]       = self:action "n_toggle_permission",
       [rev_maps["TogglePreview"]]           = self:action "n_toggle_preview",
       [rev_maps["ToggleDetails"]]           = self:action "n_toggle_details",
+      [rev_maps["ToggleSize"]]               = self:action "n_toggle_size",
+      [rev_maps["ToggleCreationTime"]]      = self:action "n_toggle_creation_time",
       [rev_maps["PasteEntry"]]              = self:action "n_paste",
       [rev_maps["SortByCreationTime"]]      = self:action "n_sort_creation_time",
       [rev_maps["GotoCwdOriginal"]]         = self:action "n_goto_cwd_original",
@@ -224,12 +227,52 @@ function Finder:open(kind)
             if prev < 1 then return end
             local prev_line = vim.api.nvim_buf_get_lines(bufnr, prev - 1, prev, false)[1]
             if not prev_line then return fallback(0) end
-            -- `.*` backtracks from the end, so `.*()%d+` would stop at
-            -- the last digit; requiring the preceding space anchors the
-            -- capture at the first digit of the size ("  991B" -> "|991B").
-            local ds = prev_line:match(".*%s()%d+B%s*$")
+            -- The size sits mid-line when trailing columns follow it, so
+            -- strip a trailing "| DD/MM/YY HH:MM" date first, then anchor on
+            -- the size at the end ("| 991B", "| 11.1K").
+            -- `.*` backtracks from the end, so the capture lands on the
+            -- last (i.e. the size) block rather than on a numeric filename.
+            local stripped = prev_line:gsub("%s+|?%s*%d%d/%d%d/%d%d %d%d:%d%d%s*$", "")
+            local ds = stripped:match(".*%s()([%d.]+[BKMGT])%s*$")
             if not ds then return fallback(0) end
             self.win:set_cursor(prev, ds - 1)
+          end, mopts)
+        end
+      end
+
+      -- Smart `o`: on an OPEN directory entry line, open the new line right
+      -- below it at child indent (just above the first child) and start
+      -- typing there. The indent level is what parents a new entry on save.
+      -- Closed directories, "../", the header and files keep builtin `o`
+      -- (autoindent already yields the sibling indent).
+      -- Anywhere else, or with a count, falls back to builtin `o`.
+      -- Skipped when the user mapped `o` themselves.
+      do
+        local user_o = view_cfg.mappings and view_cfg.mappings["o"]
+        if not user_o then
+          vim.keymap.set("n", "o", function()
+            local function fallback(count)
+              vim.api.nvim_feedkeys((count > 0 and count or "") .. "o", "n", false)
+            end
+            if vim.v.count > 0 then return fallback(vim.v.count) end
+            if not self.win:has_valid_winid() then return end
+            local row, _ = self.win:get_cursor()
+            if not row then return end
+            local cur = vim.api.nvim_buf_get_lines(bufnr, row - 1, row, false)[1] or ""
+            -- Only open directories (real ref_id, trailing "/" name, node
+            -- expanded) take over; everything else keeps builtin `o`.
+            local ref_id = helper.parse_ref_id(cur)
+            if not ref_id or not helper.parse_is_directory(cur) then return fallback(0) end
+            local node_entry = self.files:node_entry(ref_id)
+            if not (node_entry and node_entry.open) then return fallback(0) end
+            local new_indent = (cur:match("^(%s*)") or "") .. "  "
+            vim.api.nvim_buf_set_lines(bufnr, row, row, false, { new_indent })
+            self.win:set_cursor(row + 1, #new_indent)
+            vim.cmd("startinsert")
+            -- Normal-mode cursor cannot rest past the last indent space, so
+            -- it lands one cell short; nudge right now that Insert is active
+            -- (queued behind, runs in Insert mode) to type after the indent.
+            vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<Right>", true, false, true), "n", false)
           end, mopts)
         end
       end
@@ -293,14 +336,12 @@ function Finder:open(kind)
   -- so that next_secondary_slot() correctly sees the slot as available.
   if self.slot ~= ORIG_SLOT and self.win:has_valid_winid() then
     local winid = self.win.winid
-    local slot  = self.slot
+    local slot = self.slot
     vim.api.nvim_create_autocmd("WinClosed", {
-      pattern  = tostring(winid),
-      once     = true,
+      pattern = tostring(winid),
+      once = true,
       callback = function()
-        if instances[slot] and instances[slot].win and instances[slot].win.winid == winid then
-          instances[slot] = nil
-        end
+        if instances[slot] and instances[slot].win and instances[slot].win.winid == winid then instances[slot] = nil end
       end,
     })
   end
@@ -326,9 +367,7 @@ function Finder:close()
   require("fyler.views.finder.actions").close_preview(self)
   if self.win then self.win:hide() end
   -- Free the slot so it can be reused by the next secondary
-  if self.slot and self.slot ~= 1 then
-    instances[self.slot] = nil
-  end
+  if self.slot and self.slot ~= 1 then instances[self.slot] = nil end
 end
 
 function Finder:navigate(...) self.files:navigate(...) end
@@ -351,18 +390,16 @@ function Finder:change_root(path)
   -- Update the finder's URI to match the new path (but don't change buffer name)
   local normalized_path = vim.fn.fnamemodify(Path.new(path):posix_path(), ":p"):gsub("/$", "")
   self.uri = helper.build_protocol_uri(normalized_path, self.slot)
-  
+
   -- Update the window title
-  if self.win then 
+  if self.win then
     self.win:update_title(string.format(" %s ", Path.new(path):os_path()))
     self.win:set_header(vim.fn.fnamemodify(Path.new(path):os_path(), ":~"))
   end
-  
+
   -- Update global CWD only for the original instance so secondary
   -- navigations do not mutate the global / leak into other buffers.
-  if self.slot == ORIG_SLOT then
-    update_global_cwd(normalized_path)
-  end
+  if self.slot == ORIG_SLOT then update_global_cwd(normalized_path) end
 
   -- Restart the git watcher for the new directory.  disable(true) above stopped
   -- and cleared all watchers; start_git() resolves the new git dir from the
@@ -409,16 +446,12 @@ function Finder:dispatch_refresh(opts)
     -- operations (git add, git commit, …) go undetected because the directory
     -- watcher intentionally skips .git/index changes (relying on the git
     -- watcher that was never started).
-    if opts.force_update then
-      self.watcher:start_git()
-    end
+    if opts.force_update then self.watcher:start_git() end
 
     vim.schedule(function()
       require("fyler.views.finder.ui").files(
         files_table,
-        function(component, options)
-          self.win.ui:render(component, options, opts.onrender)
-        end
+        function(component, options) self.win.ui:render(component, options, opts.onrender) end
       )
     end)
   end)
@@ -521,18 +554,14 @@ function M.instance(slot, dir)
   if instances[slot] then return instances[slot] end
 
   -- Initialize global_cwd on first-ever instance creation
-  if not global_cwd then
-    global_cwd = vim.fn.fnamemodify(vim.fn.getcwd(), ":p"):gsub("/$", "")
-  end
+  if not global_cwd then global_cwd = vim.fn.fnamemodify(vim.fn.getcwd(), ":p"):gsub("/$", "") end
 
   local path
   if dir then
     path = vim.fn.fnamemodify(Path.new(dir):posix_path(), ":p"):gsub("/$", "")
   else
     -- Secondaries start at the original instance's current directory
-    path = (slot == ORIG_SLOT or not instances[ORIG_SLOT])
-      and global_cwd
-      or instances[ORIG_SLOT]:getcwd()
+    path = (slot == ORIG_SLOT or not instances[ORIG_SLOT]) and global_cwd or instances[ORIG_SLOT]:getcwd()
   end
 
   local uri = helper.build_protocol_uri(path, slot)
@@ -593,9 +622,7 @@ function M.set_current_dir(path)
 
   -- Refresh the rendered tree. Works whether fyler is open or closed:
   -- if open, re-renders immediately; if closed, the stale tree is replaced next open.
-  vim.schedule(function()
-    finder:dispatch_refresh({ force_update = true })
-  end)
+  vim.schedule(function() finder:dispatch_refresh({ force_update = true }) end)
 end
 
 function M.get_current_dir() return global_cwd end
@@ -608,9 +635,7 @@ function M.get_current_dir() return global_cwd end
 ---@param kind WinKind|nil
 function M.open_at(dir, kind)
   kind = kind or config.values.views.finder.win.kind
-  if helper.is_protocol_uri(dir) then
-    dir = helper.parse_protocol_uri(dir) or dir
-  end
+  if helper.is_protocol_uri(dir) then dir = helper.parse_protocol_uri(dir) or dir end
   local normalized = vim.fn.fnamemodify(Path.new(dir):posix_path(), ":p"):gsub("/$", "")
   assert(Path.new(normalized):is_directory(), "Path must be a valid directory")
 
@@ -663,7 +688,10 @@ function M.open_at(dir, kind)
       return inst
     end
   end
-  vim.notify("[Fyler] Maximum number of instances (" .. MAX_INSTANCES .. ") already open. Close one first.", vim.log.levels.WARN)
+  vim.notify(
+    "[Fyler] Maximum number of instances (" .. MAX_INSTANCES .. ") already open. Close one first.",
+    vim.log.levels.WARN
+  )
   return nil
 end
 
@@ -673,9 +701,7 @@ end
 ---@param kind WinKind|nil
 function M.toggle_at(dir, kind)
   kind = kind or config.values.views.finder.win.kind
-  if helper.is_protocol_uri(dir) then
-    dir = helper.parse_protocol_uri(dir) or dir
-  end
+  if helper.is_protocol_uri(dir) then dir = helper.parse_protocol_uri(dir) or dir end
   local normalized = vim.fn.fnamemodify(Path.new(dir):posix_path(), ":p"):gsub("/$", "")
   assert(Path.new(normalized):is_directory(), "Path must be a valid directory")
 
@@ -700,15 +726,11 @@ function M.toggle_at(dir, kind)
 end
 
 ---@param kind WinKind|nil
-function M.open(kind) 
-  M.instance(ORIG_SLOT):open(kind or config.values.views.finder.win.kind) 
-end
+function M.open(kind) M.instance(ORIG_SLOT):open(kind or config.values.views.finder.win.kind) end
 
 M.close = vim.schedule_wrap(function()
   local finder = instances[ORIG_SLOT]
-  if finder and finder:isopen() then
-    finder:close()
-  end
+  if finder and finder:isopen() then finder:close() end
 end)
 
 ---@param kind WinKind|nil
@@ -723,9 +745,7 @@ end)
 
 M.focus = vim.schedule_wrap(function()
   local finder = instances[ORIG_SLOT]
-  if finder and finder.win then
-    finder.win:focus()
-  end
+  if finder and finder.win then finder.win:focus() end
 end)
 
 -- TODO: Can futher optimize by determining whether `files:navgiate` did any change or not?
@@ -735,7 +755,7 @@ M.navigate = vim.schedule_wrap(function(path, opts)
 
   local finder = instances[ORIG_SLOT]
   if not finder then return end
-  
+
   if not finder:isopen() then return end
 
   local set_cursor = vim.schedule_wrap(function(ref_id)

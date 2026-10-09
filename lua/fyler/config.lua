@@ -57,9 +57,13 @@ local DEPRECATION_RULES = {
 ---| "SelectSplit"
 ---| "SelectTab"
 ---| "SelectVSplit"
+---| "ShowHelp"
 ---| "CollapseAll"
 ---| "CollapseNode"
 ---| "ToggleDetails"
+---| "TogglePermissions"
+---| "ToggleSize"
+---| "ToggleCreationTime"
 ---| "TogglePreview"
 ---| "SetCwdHere"
 ---| "SetCwdToParent"
@@ -250,6 +254,7 @@ function config.defaults()
           ["#"] = "CollapseAll",
           ["<BS>"] = "CollapseNode",
           ["gC"] = "SortByCreationTime",
+          ["g?"] = "ShowHelp",
           ["gv"] = "OpenSecondaryVSplit",
           ["gs"] = "OpenSecondaryHSplit",
           ["<C-p>"] = "TogglePreview",
@@ -364,9 +369,7 @@ function config.rev_maps(name)
     -- { n = function(view) ..., x = "VisualYankEntries" }. The "x"/"visual"
     -- entry is a visual-mode action name, collected here for rev_maps.
     local action = v
-    if type(v) == "table" then
-      action = v.x or v.visual or v
-    end
+    if type(v) == "table" then action = v.x or v.visual or v end
     if type(action) == "string" then
       local current = rev_maps[action]
       if current then

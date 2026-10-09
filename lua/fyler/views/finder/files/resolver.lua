@@ -48,23 +48,26 @@ function Resolver:_parse_buffer()
     -- For new entries (no ref_id) detect directory intent from trailing "/"
     local entry_is_dir = (not entry_ref_id) and helper.parse_is_directory(line)
 
-    -- Validate: when the permission column is enabled, every existing entry
-    -- (ref_id present) must have a well-formed 9-char permission string followed
-    -- by a space.  A missing or truncated string means the user made an invalid
-    -- edit – abort with a clear message so the caller can notify and rerender.
-    local perm_enabled = config.values.views.finder.columns.permission
-      and config.values.views.finder.columns.permission.enabled
-    if perm_enabled and entry_ref_id and not entry_perms then
-      local after_ref = line:match("/%d+ (.*)$") or ""
-      error(string.format(
-        "Invalid permission string in %q – expected 9 chars (rwxrwxrwx) after the file name",
-        after_ref
-      ))
+    -- Validate: every existing entry (ref_id present) must be structurally
+    -- intact — trailing date (when the date column is on) and a well-formed
+    -- permission block (when the permission column is on). An invalid edit
+    -- aborts with a clear message so the caller can notify and rerender.
+    -- Size *content* edits are always ignored silently (see parse_entry),
+    -- never validated.
+    if entry_ref_id then
+      local _, _, entry_err = helper.parse_entry(line)
+      if entry_err then error(string.format("Invalid entry in %q – %s", line, entry_err)) end
+      local perm_enabled = config.values.views.finder.columns.permission
+        and config.values.views.finder.columns.permission.enabled
+      if perm_enabled and not entry_perms then
+        error(
+          string.format(
+            "Invalid permission string in %q – expected 10 chars (type + rwxrwxrwx, e.g. .rw-r--r--) after the file name",
+            line
+          )
+        )
+      end
     end
-
-    -- NOTE: anything after the permission block (the editable size text)
-    -- is ignored by the parsers above, so size modifications never produce
-    -- actions and never warn — the next refresh restores the original text.
 
     while parent_stack:size() > 1 and parent_stack:top().indent >= entry_indent do
       parent_stack:pop()
@@ -140,12 +143,12 @@ function Resolver:_generate_actions(parsed_tree)
 
     -- Collect just the paths for move/copy logic (unchanged from before)
     local dst_paths = {}
-    for _, e in ipairs(dst_entries) do table.insert(dst_paths, e.path) end
+    for _, e in ipairs(dst_entries) do
+      table.insert(dst_paths, e.path)
+    end
 
     if #dst_paths == 1 then
-      if dst_paths[1] ~= old_path then
-        table.insert(actions, { type = "move", src = old_path, dst = dst_paths[1] })
-      end
+      if dst_paths[1] ~= old_path then table.insert(actions, { type = "move", src = old_path, dst = dst_paths[1] }) end
       -- Check for permission change (only when the file wasn't moved)
       local new_perms = dst_entries[1].perms
       if new_perms and dst_paths[1] == old_path then
@@ -153,7 +156,7 @@ function Resolver:_generate_actions(parsed_tree)
         if stat then
           local ui = require("fyler.views.finder.ui")
           local new_mode = ui.perms_to_mode(new_perms, stat.mode)
-          local old_mode = stat.mode % 512  -- lower 9 bits only
+          local old_mode = stat.mode % 512 -- lower 9 bits only
           if new_mode and (new_mode % 512) ~= old_mode then
             table.insert(actions, { type = "chmod", path = old_path, mode = new_mode })
           end

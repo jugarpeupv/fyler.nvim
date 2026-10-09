@@ -24,8 +24,9 @@ function M.new_neovim()
     nvim.set_size(20, 80)
   end
 
-  -- Like setup() but also disables the inline permission and size columns so
-  -- that existing screenshot references stay valid (both change buffer text).
+  -- Like setup() but also disables the inline permission, size and date
+  -- columns so that existing screenshot references stay valid (all three
+  -- change buffer text; with all off, lines render exactly as before).
   nvim.setup_no_perm = function(opts)
     opts = vim.tbl_deep_extend("keep", opts or {}, {
       views = {
@@ -33,6 +34,7 @@ function M.new_neovim()
           columns = {
             permission = { enabled = false },
             size = { enabled = false },
+            creation_time = { enabled = false },
           },
         },
       },

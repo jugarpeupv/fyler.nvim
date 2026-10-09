@@ -23,9 +23,7 @@ local function _select(self, opener, opts)
   -- Pressing <CR> on it navigates up one directory, matching netrw behaviour.
   if vim.fn.line(".") == 2 then
     local parent_dir = Path.new(self:getcwd()):parent():posix_path()
-    if parent_dir ~= self:getcwd() then
-      self:change_root(parent_dir):dispatch_refresh({ force_update = true })
-    end
+    if parent_dir ~= self:getcwd() then self:change_root(parent_dir):dispatch_refresh({ force_update = true }) end
     return
   end
 
@@ -50,11 +48,7 @@ local function _select(self, opener, opts)
   -- fyler buffer that the split originates from, leaving an empty [No Name]
   -- pane (e.g. SelectVSplit from a single-window replace layout).
   local should_close = not opts.keep_open
-    and (
-      self.win.kind:match("^replace")
-      or self.win.kind:match("^float")
-      or config.values.views.finder.close_on_select
-    )
+    and (self.win.kind:match("^replace") or self.win.kind:match("^float") or config.values.views.finder.close_on_select)
 
   local function is_usable_win(winid)
     if not vim.api.nvim_win_is_valid(winid) then return false end
@@ -68,9 +62,7 @@ local function _select(self, opener, opts)
     -- itself — doing so would open the file inside fyler's buffer.
     local fyler_winid = not should_close and self.win.winid or nil
 
-    if is_usable_win(self.win.origin_win) and self.win.origin_win ~= fyler_winid then
-      return self.win.origin_win
-    end
+    if is_usable_win(self.win.origin_win) and self.win.origin_win ~= fyler_winid then return self.win.origin_win end
 
     for _, winid in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
       if is_usable_win(winid) and winid ~= fyler_winid then
@@ -103,10 +95,12 @@ local function _select(self, opener, opts)
       ---@type table<integer, integer>  winid -> saved width
       local fixed_win_widths = {}
       for _, wid in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
-        if wid ~= fyler_win.winid
+        if
+          wid ~= fyler_win.winid
           and vim.api.nvim_win_is_valid(wid)
           and vim.api.nvim_win_get_config(wid).relative == ""
-          and vim.wo[wid].winfixwidth then
+          and vim.wo[wid].winfixwidth
+        then
           local col = vim.api.nvim_win_get_position(wid)[2]
           local w = vim.api.nvim_win_get_width(wid)
           fixed_win_widths[wid] = w
@@ -119,20 +113,14 @@ local function _select(self, opener, opts)
       fixed_win_widths[fyler_win.winid] = fyler_width
       local new_width = math.max(vim.o.columns - fyler_width - 1 - fixed_others_width, 1)
       local split_opts = { split = "right", width = new_width }
-      if fyler_win.winid and vim.api.nvim_win_is_valid(fyler_win.winid) then
-        split_opts.win = fyler_win.winid
-      end
+      if fyler_win.winid and vim.api.nvim_win_is_valid(fyler_win.winid) then split_opts.win = fyler_win.winid end
       winid = vim.api.nvim_open_win(new_buf, true, split_opts)
       local new_winid = winid
       vim.schedule(function()
         for wid, w in pairs(fixed_win_widths) do
-          if vim.api.nvim_win_is_valid(wid) then
-            vim.api.nvim_win_set_width(wid, w)
-          end
+          if vim.api.nvim_win_is_valid(wid) then vim.api.nvim_win_set_width(wid, w) end
         end
-        if vim.api.nvim_win_is_valid(new_winid) then
-          vim.api.nvim_win_set_width(new_winid, new_width)
-        end
+        if vim.api.nvim_win_is_valid(new_winid) then vim.api.nvim_win_set_width(new_winid, new_width) end
       end)
       created_window = true
     end
@@ -170,9 +158,7 @@ end
 function M.n_select_if_directory(self)
   return function()
     local entry = self:cursor_node_entry()
-    if entry and entry.type == "directory" then
-      return M.n_select(self)()
-    end
+    if entry and entry.type == "directory" then return M.n_select(self)() end
     vim.api.nvim_feedkeys("$", "n", false)
   end
 end
@@ -250,7 +236,7 @@ function M.n_goto_parent(self)
   return function()
     local parent_dir = Path.new(self:getcwd()):parent():posix_path()
     if parent_dir == self:getcwd() then return end
-    
+
     -- Navigate within the tree (don't change tree root)
     self:change_root(parent_dir):dispatch_refresh({ force_update = true })
   end
@@ -329,7 +315,7 @@ function M.n_set_cwd_to_parent(self)
   return function()
     local parent_dir = Path.new(self:getcwd()):parent():posix_path()
     if parent_dir == self:getcwd() then return end
-    
+
     local finder_module = require("fyler.views.finder")
     finder_module.set_current_dir(parent_dir)
   end
@@ -340,9 +326,9 @@ function M.n_set_cwd_here(self)
   return function()
     local finder_module = require("fyler.views.finder")
     local current_cwd = finder_module.get_current_dir()
-    
+
     if current_cwd == self:getcwd() then return end
-    
+
     finder_module.set_current_dir(self:getcwd())
   end
 end
@@ -363,7 +349,7 @@ function M.n_set_cwd_to_node(self)
       -- For files, use the parent directory
       target_path = Path.new(entry.path):parent():posix_path()
     end
-    
+
     local finder_module = require("fyler.views.finder")
     finder_module.set_current_dir(target_path)
   end
@@ -379,17 +365,47 @@ function M.n_toggle_permission(self)
 end
 
 ---@param self Finder
+function M.n_toggle_creation_time(self)
+  return function()
+    local columns = config.values.views.finder.columns
+    local ctime_cfg = columns.creation_time
+    if not ctime_cfg then return end
+    ctime_cfg.enabled = not ctime_cfg.enabled
+    self:dispatch_refresh({ force_update = true })
+  end
+end
+
+---@param self Finder
+function M.n_toggle_size(self)
+  return function()
+    local columns = config.values.views.finder.columns
+    local size_cfg = columns.size
+    if not size_cfg then return end
+    size_cfg.enabled = not size_cfg.enabled
+    self:dispatch_refresh({ force_update = true })
+  end
+end
+
+---@param self Finder
 function M.n_toggle_details(self)
   return function()
-    -- Toggle the inline permission and size text together. Both are real
-    -- buffer text, so flipping the flags and re-rendering is sufficient;
-    -- the resolver already treats a missing suffix as "column off".
+    -- Master toggle for all inline metadata (permissions, size, date). If
+    -- any of them is shown, hide all three; if all are hidden, show all
+    -- three. They are real buffer text, so flipping the flags and
+    -- re-rendering is sufficient; the resolver already treats a missing
+    -- suffix as "column off".
     local columns = config.values.views.finder.columns
     local perm_cfg = columns.permission
     local size_cfg = columns.size
-    local target = not ((perm_cfg and perm_cfg.enabled) or (size_cfg and size_cfg.enabled))
+    local date_cfg = columns.creation_time
+    local target = not (
+      (perm_cfg and perm_cfg.enabled)
+      or (size_cfg and size_cfg.enabled)
+      or (date_cfg and date_cfg.enabled)
+    )
     if perm_cfg then perm_cfg.enabled = target end
     if size_cfg then size_cfg.enabled = target end
+    if date_cfg then date_cfg.enabled = target end
     self:dispatch_refresh({ force_update = true })
   end
 end
@@ -440,9 +456,7 @@ function M.close_preview(self)
   self.preview = nil
   if pv.au_group then pcall(vim.api.nvim_del_augroup_by_id, pv.au_group) end
   if pv.image then pcall(function() pv.image:clear() end) end
-  if pv.winid and vim.api.nvim_win_is_valid(pv.winid) then
-    pcall(vim.api.nvim_win_close, pv.winid, true)
-  end
+  if pv.winid and vim.api.nvim_win_is_valid(pv.winid) then pcall(vim.api.nvim_win_close, pv.winid, true) end
   if pv.bufnr and vim.api.nvim_buf_is_valid(pv.bufnr) then
     pcall(vim.api.nvim_buf_delete, pv.bufnr, { force = true })
   end
@@ -606,8 +620,7 @@ function M.n_toggle_preview(self)
         -- almost immediately; while scrolling fast, coalesce so intermediate
         -- conversions never start. Stale generations are always dropped.
         local now = vim.uv.hrtime()
-        local delay = ((now - (pv.last_kick or 0)) / 1e6 > PREVIEW_IDLE_MS)
-            and PREVIEW_IDLE_DEBOUNCE_MS
+        local delay = ((now - (pv.last_kick or 0)) / 1e6 > PREVIEW_IDLE_MS) and PREVIEW_IDLE_DEBOUNCE_MS
           or PREVIEW_DEBOUNCE_MS
         pv.last_kick = now
         vim.defer_fn(function()
@@ -619,6 +632,119 @@ function M.n_toggle_preview(self)
     preview_update(self)
     -- Return focus to fyler so motion keys keep working.
     if self.win:has_valid_winid() then vim.api.nvim_set_current_win(self.win.winid) end
+  end
+end
+
+-- Descriptions for the keymap help popup (mirrors doc/fyler.txt).
+local HELP_DESCS = {
+  CloseView = "Close the finder window",
+  CollapseAll = "Collapse all open directory nodes",
+  CollapseNode = "Collapse the directory node under the cursor",
+  GotoCwd = "Go to the current working directory",
+  GotoCwdOriginal = "Go back to the original working directory",
+  GotoNode = "Go to the node under the cursor",
+  GotoParent = "Go to the parent directory",
+  OpenSecondaryHSplit = "Open secondary instance in a horizontal split",
+  OpenSecondaryVSplit = "Open secondary instance in a vertical split",
+  PasteEntry = "Paste yanked/cut entries here",
+  Select = "Open file or toggle directory expand/collapse",
+  SelectIfDirectory = "Like Select on directories, builtin motion otherwise",
+  SelectSplit = "Open file in a horizontal split",
+  SelectTab = "Open file in a new tab",
+  SelectVSplit = "Open file in a vertical split",
+  SetCwdHere = "Set cwd to the directory under the cursor",
+  SetCwdToNode = "Set cwd to the node under the cursor",
+  SetCwdToParent = "Set cwd to the parent directory",
+  ShowHelp = "Show this keymap help",
+  SortByCreationTime = "Toggle sort by creation time",
+  ToggleCreationTime = "Toggle the inline date column on/off",
+  ToggleDetails = "Toggle all inline metadata (permissions, size, date) on/off",
+  TogglePermissions = "Toggle the inline permissions column on/off",
+  ToggleSize = "Toggle the inline size text on/off",
+  TogglePreview = "Toggle a vsplit preview following the cursor",
+  VisualCutEntries = "Cut visual selection entries",
+  VisualYankEntries = "Yank visual selection entries",
+}
+
+---Show a floating pane with the available keymaps, including user custom
+---ones (plain functions render as "user custom func"). Non-focusable;
+---dismissed on the next cursor move, buffer leave, or re-invocation.
+---@param self Finder
+function M.n_show_help(self)
+  return function()
+    local function close_help()
+      local prev = self.help_popup
+      self.help_popup = nil
+      if not prev then return end
+      if prev.win and vim.api.nvim_win_is_valid(prev.win) then pcall(vim.api.nvim_win_close, prev.win, true) end
+      if prev.buf and vim.api.nvim_buf_is_valid(prev.buf) then
+        pcall(vim.api.nvim_buf_delete, prev.buf, { force = true })
+      end
+    end
+    close_help()
+
+    local rows = {}
+    local function push(key, def)
+      if type(def) == "function" then
+        table.insert(rows, { key = key, desc = "user custom func" })
+      elseif type(def) == "string" then
+        table.insert(rows, { key = key, desc = HELP_DESCS[def] or def })
+      end
+    end
+    for key, def in pairs(config.values.views.finder.mappings or {}) do
+      if type(def) == "table" then
+        local n, x = def.n, def.x or def.visual
+        if n ~= nil and x ~= nil then
+          push(key .. " (n)", n)
+          push(key .. " (x)", x)
+        elseif n ~= nil or x ~= nil then
+          push(key, n or x)
+        else
+          table.insert(rows, { key = key, desc = "user custom func" })
+        end
+      else
+        push(key, def)
+      end
+    end
+    table.sort(rows, function(a, b) return a.key < b.key end)
+
+    local key_w = 3
+    for _, r in ipairs(rows) do
+      key_w = math.max(key_w, vim.fn.strdisplaywidth(r.key))
+    end
+    local lines, width = {}, 0
+    for _, r in ipairs(rows) do
+      local line = " " .. r.key .. string.rep(" ", key_w - vim.fn.strdisplaywidth(r.key) + 2) .. r.desc .. " "
+      table.insert(lines, line)
+      width = math.max(width, vim.fn.strdisplaywidth(line))
+    end
+    if #lines == 0 then return end
+    width = math.min(width, vim.o.columns - 4)
+    local height = math.min(#lines, math.max(vim.o.lines - 6, 1))
+
+    local bufnr = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
+    vim.bo[bufnr].modifiable = false
+    local winid = vim.api.nvim_open_win(bufnr, false, {
+      relative = "editor",
+      width = width,
+      height = height,
+      row = math.max(math.floor((vim.o.lines - height) / 2), 0),
+      col = math.max(math.floor((vim.o.columns - width) / 2), 0),
+      style = "minimal",
+      border = "rounded",
+      title = " Fyler keymaps ",
+      title_pos = "left",
+      focusable = false,
+      noautocmd = true,
+      zindex = 60,
+    })
+    self.help_popup = { win = winid, buf = bufnr }
+    vim.api.nvim_create_autocmd({ "CursorMoved", "BufLeave" }, {
+      buffer = self.win.bufnr,
+      once = true,
+      callback = close_help,
+    })
   end
 end
 
@@ -644,7 +770,7 @@ function M.n_open_secondary_vsplit(_self)
     for _, wid in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
       if vim.api.nvim_win_is_valid(wid) then
         local cfg = vim.api.nvim_win_get_config(wid)
-        local ft  = vim.bo[vim.api.nvim_win_get_buf(wid)].filetype
+        local ft = vim.bo[vim.api.nvim_win_get_buf(wid)].filetype
         if cfg.relative == "" and ft ~= "fyler" then
           editor_win = wid
           break
@@ -656,9 +782,7 @@ function M.n_open_secondary_vsplit(_self)
     -- the secondary finder into the new split with replace kind so it sits
     -- exactly in that half of the editor area.
     local target_win
-    if editor_win then
-      vim.api.nvim_set_current_win(editor_win)
-    end
+    if editor_win then vim.api.nvim_set_current_win(editor_win) end
     vim.cmd("vsplit")
     target_win = vim.api.nvim_get_current_win()
 
@@ -676,7 +800,7 @@ function M.n_open_secondary_split(_self)
     for _, wid in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
       if vim.api.nvim_win_is_valid(wid) then
         local cfg = vim.api.nvim_win_get_config(wid)
-        local ft  = vim.bo[vim.api.nvim_win_get_buf(wid)].filetype
+        local ft = vim.bo[vim.api.nvim_win_get_buf(wid)].filetype
         if cfg.relative == "" and ft ~= "fyler" then
           editor_win = wid
           break
@@ -684,9 +808,7 @@ function M.n_open_secondary_split(_self)
       end
     end
 
-    if editor_win then
-      vim.api.nvim_set_current_win(editor_win)
-    end
+    if editor_win then vim.api.nvim_set_current_win(editor_win) end
     vim.cmd("split")
     local target_win = vim.api.nvim_get_current_win()
 
@@ -706,10 +828,10 @@ local function v_collect(self, action)
   -- When the keymap fires from visual mode the '</'> marks may not be set yet
   -- (first ever visual selection in this buffer). Read the live cursor and "v"
   -- anchor positions instead, which are always valid while in visual mode.
-  local cur   = vim.fn.line(".")
-  local anch  = vim.fn.line("v")
+  local cur = vim.fn.line(".")
+  local anch = vim.fn.line("v")
   local first = math.min(cur, anch)
-  local last  = math.max(cur, anch)
+  local last = math.max(cur, anch)
 
   -- Lines 1 (cwd header) and 2 ("../") are not file entries. If the selection
   -- touches either of them, fall back to a plain yank and do nothing fyler-specific.
@@ -816,20 +938,14 @@ function M.n_paste(self)
         return result
       end, operations)
 
-      local get_confirmation = async.wrap(
-        vim.schedule_wrap(function(...) require("fyler.input").confirm.open(...) end)
-      )
+      local get_confirmation = async.wrap(vim.schedule_wrap(function(...) require("fyler.input").confirm.open(...) end))
 
-      local confirmed = get_confirmation(
-        require("fyler.views.finder.ui").operations(display_ops)
-      )
+      local confirmed = get_confirmation(require("fyler.views.finder.ui").operations(display_ops))
       if not confirmed then return end
 
       -- Execute sequentially, same pattern as run_mutation
       local fs = require("fyler.lib.fs")
-      local spinner = require("fyler.lib.spinner").new(
-        string.format("Pasting (0/%d)", #operations)
-      )
+      local spinner = require("fyler.lib.spinner").new(string.format("Pasting (0/%d)", #operations))
       spinner:start()
 
       local run = async.wrap(function(op, _next)
@@ -839,11 +955,7 @@ function M.n_paste(self)
 
       for i, op in ipairs(operations) do
         local err = run(op)
-        if err then
-          vim.schedule_wrap(vim.notify)(
-            tostring(err), vim.log.levels.ERROR, { title = "Fyler" }
-          )
-        end
+        if err then vim.schedule_wrap(vim.notify)(tostring(err), vim.log.levels.ERROR, { title = "Fyler" }) end
         spinner:set_text(string.format("Pasting (%d/%d)", i, #operations))
       end
 
@@ -867,20 +979,20 @@ function M.n_paste(self)
                 break
               end
             end
-            if should_refresh then
-              inst:dispatch_refresh({ force_update = true })
-            end
+            if should_refresh then inst:dispatch_refresh({ force_update = true }) end
           end
         end
       end)
 
       -- Report full destination paths
-      vim.schedule(function()
-        vim.notify(
-          string.format("[Fyler] Pasted %d file(s):\n%s", #dsts, table.concat(dsts, "\n")),
-          vim.log.levels.INFO
-        )
-      end)
+      vim.schedule(
+        function()
+          vim.notify(
+            string.format("[Fyler] Pasted %d file(s):\n%s", #dsts, table.concat(dsts, "\n")),
+            vim.log.levels.INFO
+          )
+        end
+      )
     end)
   end
 end

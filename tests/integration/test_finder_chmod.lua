@@ -53,18 +53,16 @@ local T = helper.new_set({
   },
 })
 
--- Helper: replace the 9-char permission substring in a buffer line.
+-- Helper: replace the 10-char permission substring in a buffer line.
 -- Returns the modified line, or the original if no valid perm block is found.
 local function replace_perm(line, new_perm)
-  -- Lines have format:  <indent><icon>  /NNNNN <9-char-perm> <name>
-  -- We locate the perm block right after the /NNNNN token.
-  local prefix, rest = line:match("^(.*/%d+ )(.*)$")
+  -- Lines have format:  <indent><icon>  /NNNNN <name>  <type><9-char-perm>[ | <size>][ | <date>]
+  -- We locate the perm block after the file name (greedy match so names with
+  -- spaces still resolve to the LAST perm-like block).
+  local prefix, rest =
+    line:match("^(.*  )[%.dlcbps?]?[rwx%-][rwx%-][rwx%-][rwx%-][rwx%-][rwx%-][rwx%-][rwx%-][rwx%-](.*)$")
   if not prefix then return line end
-  -- Verify the first 9 chars of rest look like a perm string.
-  if not rest:match("^[rwx%-][rwx%-][rwx%-][rwx%-][rwx%-][rwx%-][rwx%-][rwx%-][rwx%-] ") then
-    return line
-  end
-  return prefix .. new_perm .. " " .. rest:sub(11)
+  return prefix .. new_perm .. rest
 end
 
 T["Chmod"] = helper.new_set()
@@ -86,7 +84,7 @@ T["Chmod"]["Applies Permission Change On Write"] = function()
   local new_lines = {}
   for _, line in ipairs(lines) do
     if line:find("target%-file") then
-      table.insert(new_lines, replace_perm(line, "rwxrwxrwx"))
+      table.insert(new_lines, replace_perm(line, ".rwxrwxrwx"))
     else
       table.insert(new_lines, line)
     end
@@ -119,17 +117,14 @@ T["Chmod"]["Invalid Perm String Shows Warning And Rerenders"] = function()
   nvim.forward_lua("require('fyler').open")({ dir = path, kind = "replace" })
   vim.uv.sleep(30)
 
-  -- Corrupt the permission field by replacing its first character with 'b'
-  -- (invalid), keeping the size suffix intact so only perm validation trips
+  -- Corrupt the permission field by replacing the first rwx character with
+  -- 'b' (invalid), keeping the type prefix and name/size/date intact so only
+  -- validation trips. The 10-char block sits after the file name.
   local lines = nvim.get_lines(0, 0, -1, false)
   local new_lines = {}
   for _, line in ipairs(lines) do
     if line:find("guarded%-file") then
-      local corrupted = line:gsub(
-        "  ([rwx%-])([rwx%-][rwx%-][rwx%-][rwx%-][rwx%-][rwx%-][rwx%-][rwx%-]%s)",
-        "  b%2",
-        1
-      )
+      local corrupted = line:gsub("(  %.)[rwx%-]", "%1b", 1)
       table.insert(new_lines, corrupted)
     else
       table.insert(new_lines, line)

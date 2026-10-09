@@ -104,7 +104,12 @@ T["Each WinKind Can"]["Do Move Actions"] = function(kind)
   local path = make_tree({ "a-file", "a-dir/", "b-dir/", "b-dir/ba-file" })
   nvim.forward_lua("require('fyler').open")({ dir = path, kind = kind })
   vim.uv.sleep(20)
+  -- With the filename last, a realistic rename inserts the suffix before a
+  -- trailing "/" (directories) or appends it (files).
   local function add_suffix(line, suffix)
+    if vim.endswith(line, "/") then
+      return line:sub(1, -2) .. suffix .. "/"
+    end
     return line .. suffix
   end
   -- stylua: ignore
@@ -120,10 +125,19 @@ T["Each WinKind Can"]["Do Copy Actions"] = function(kind)
   nvim.forward_lua("require('fyler').open")({ dir = path, kind = kind })
   vim.uv.sleep(20)
   local function add_suffix(line, suffix)
+    if vim.endswith(line, "/") then
+      return line:sub(1, -2) .. suffix .. "/"
+    end
     return line .. suffix
   end
+  -- Duplicate entry lines only: copying the header or "../" rows would
+  -- create junk entries (they carry no ref_id).
+  local copies = {}
+  for i, line in ipairs(nvim.get_lines(0, 0, -1, false)) do
+    if i > 2 then table.insert(copies, add_suffix(line, "-copied")) end
+  end
   -- stylua: ignore
-  nvim.set_lines(0, -1, -1, false, vim.tbl_map(function(line) return add_suffix(line, "-copied") end, nvim.get_lines(0, 0, -1, false)))
+  nvim.set_lines(0, -1, -1, false, copies)
   nvim.cmd("write")
   nvim.type_keys("y")
   vim.uv.sleep(20)
