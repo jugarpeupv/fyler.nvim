@@ -12,6 +12,21 @@ local Column = Ui.Column
 
 local COLUMN_ORDER = config.values.views.finder.columns_order
 
+local M = {}
+
+-- Cache of ref_id → highlight_group from the last completed Pass 2 (git/detail columns).
+-- Used in Pass 1 to pre-apply highlights so ignored/modified files never flash as
+-- unstyled text before the async git column arrives.
+-- Cleared per-entry before each update so stale highlights (e.g. after git commit
+-- removes staged status) don't linger.
+M.highlight_cache = {}
+
+-- Cache of ref_id → { symbol, icon_hl } from the last completed git pass.
+-- Used in Pass 1 to pre-fill the real-text git slot so entries never flash
+-- with a blank slot before the async git lookup arrives.
+-- Cleared per-entry before each update alongside highlight_cache.
+M.git_cache = {}
+
 -- Returns the 10-char permission string for a path, ls-style: a file-type
 -- character followed by the 9 rwx bits (".rw-r--r--", "drwxr-xr-x", ...).
 -- Regular files use "." (eza style). The type character comes from the same
@@ -157,7 +172,7 @@ local function sort_nodes(nodes)
   return nodes
 end
 
-local function flatten_tree(node, depth, result)
+local function flatten_tree(node, depth, result, parent_ignored)
   depth = depth or 0
   result = result or {}
 
@@ -165,8 +180,11 @@ local function flatten_tree(node, depth, result)
 
   local sorted_items = sort_nodes(node.children)
   for _, item in ipairs(sorted_items) do
-    table.insert(result, { item = item, depth = depth })
-    if item.children and #item.children > 0 then flatten_tree(item, depth + 1, result) end
+    local is_ignored = parent_ignored
+      or (item.ref_id and M.highlight_cache[item.ref_id] == "FylerFSIgnored")
+      or (item.ref_id and M.highlight_cache[item.ref_id] == "FylerGitIgnored")
+    table.insert(result, { item = item, depth = depth, ignored = is_ignored })
+    if item.children and #item.children > 0 then flatten_tree(item, depth + 1, result, is_ignored) end
   end
 
   return result
@@ -243,26 +261,11 @@ local function create_column_context(tag, node, flattened_entries, files_column)
   }
 end
 
-local M = {}
-
 M.tag = 0
 M.get_sort_order = function() return sort_order end
 M.set_sort_order = function(v) sort_order = v end
 M.get_permissions = get_permissions
 M.perms_to_mode = perms_to_mode
-
--- Cache of ref_id → highlight_group from the last completed Pass 2 (git/detail columns).
--- Used in Pass 1 to pre-apply highlights so ignored/modified files never flash as
--- unstyled text before the async git column arrives.
--- Cleared per-entry before each update so stale highlights (e.g. after git commit
--- removes staged status) don't linger.
-M.highlight_cache = {}
-
--- Cache of ref_id → { symbol, icon_hl } from the last completed git pass.
--- Used in Pass 1 to pre-fill the real-text git slot so entries never flash
--- with a blank slot before the async git lookup arrives.
--- Cleared per-entry before each update alongside highlight_cache.
-M.git_cache = {}
 
 -- Build one files_column Row for an entry.
 -- Display order: <icon> <name> <git> <perms> | <size> | <date>
@@ -576,12 +579,17 @@ M.files = Component.new_async(function(node, onupdate)
     local icon, hl, is_exec = icon_and_hl(item)
     local icon_highlight = (item.type == "directory") and "FylerFSDirectoryIcon" or hl
     -- Use the cached highlight from the last Pass 2 if available; this ensures
-    -- ignored/modified/staged files are already styled in Pass 1 so they never
-    -- flash as unstyled text before the async git column arrives.
+    -- ignored/modified/staged files and directories are already styled in Pass 1
+    -- so they never flash as unstyled text or reset to default directory highlight
+    -- before the async git column arrives.
+    -- If an entry has no direct cache entry but inherits ignored status from
+    -- an ancestor, pre-apply the ignored highlight immediately.
     -- Executable styling wins over git status for names when both apply.
-    local name_highlight = ((item.type == "directory") and "FylerFSDirectoryName" or nil)
-      or (is_exec and "FylerExecutable" or nil)
-      or M.highlight_cache[item.ref_id]
+    local cached_hl = (item.ref_id and M.highlight_cache[item.ref_id])
+      or (entry.ignored and ((item.type == "directory") and "FylerFSIgnored" or "FylerGitIgnored") or nil)
+    local name_highlight = (is_exec and "FylerExecutable" or nil)
+      or cached_hl
+      or ((item.type == "directory") and "FylerFSDirectoryName" or nil)
     icon = icon and (icon .. "  ") or ""
 
     -- Display order: <icon> <name> <git> <perms> | <size> | <date>
