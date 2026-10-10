@@ -56,11 +56,13 @@ local T = helper.new_set({
 -- Helper: replace the 10-char permission substring in a buffer line.
 -- Returns the modified line, or the original if no valid perm block is found.
 local function replace_perm(line, new_perm)
-  -- Lines have format:  <indent><icon>  /NNNNN <name>  <type><9-char-perm>[ | <size>][ | <date>]
-  -- We locate the perm block after the file name (greedy match so names with
-  -- spaces still resolve to the LAST perm-like block).
+  -- Lines have format:  <indent><icon>  /NNNNN <name> <git>  <type><9-char-perm>[ | <size>][ | <date>]
+  -- (git slot is real text before the perm block). We locate the perm block
+  -- after the file name (greedy match so names with spaces still resolve to
+  -- the LAST perm-like block, single-space anchored since the git slot joins
+  -- the perms with one space).
   local prefix, rest =
-    line:match("^(.*  )[%.dlcbps?]?[rwx%-][rwx%-][rwx%-][rwx%-][rwx%-][rwx%-][rwx%-][rwx%-][rwx%-](.*)$")
+    line:match("^(.* )[%.dlcbps?]?[rwx%-][rwx%-][rwx%-][rwx%-][rwx%-][rwx%-][rwx%-][rwx%-][rwx%-](.*)$")
   if not prefix then return line end
   return prefix .. new_perm .. rest
 end
@@ -119,12 +121,13 @@ T["Chmod"]["Invalid Perm String Shows Warning And Rerenders"] = function()
 
   -- Corrupt the permission field by replacing the first rwx character with
   -- 'b' (invalid), keeping the type prefix and name/size/date intact so only
-  -- validation trips. The 10-char block sits after the file name.
+  -- validation trips. The 10-char block sits after the file name (preceded
+  -- by the real-text git slot, hence the single-space anchor).
   local lines = nvim.get_lines(0, 0, -1, false)
   local new_lines = {}
   for _, line in ipairs(lines) do
     if line:find("guarded%-file") then
-      local corrupted = line:gsub("(  %.)[rwx%-]", "%1b", 1)
+      local corrupted = line:gsub("( %.)[rwx%-]", "%1b", 1)
       table.insert(new_lines, corrupted)
     else
       table.insert(new_lines, line)

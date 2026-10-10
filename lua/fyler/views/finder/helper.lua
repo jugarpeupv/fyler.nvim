@@ -17,24 +17,55 @@ local PERM_CLASS = "[rwx%-][rwx%-][rwx%-][rwx%-][rwx%-][rwx%-][rwx%-][rwx%-][rwx
 -- produces an action — only the last 9 rwx characters are returned.
 local PERM_TYPE_CLASS = "[%.dlcbps?-]"
 
+-- Git status slot rendered as real buffer text before the permission block:
+-- "<name> <git>  <perms>" where <git> is the single-char status symbol (or a
+-- space when clean/unknown). The slot is read-only: any content between the
+-- name and the permission block is ignored, never validated.
+-- ".+" (greedy name ensures the LAST perm block wins) tolerates user edits
+-- to the git character as silent no-ops, like size edits.
+---@param after_date string text after the "/NNNNN " token (date/size already stripped)
+---@return string, string|nil
+local function split_name_perms_with_git(after_date)
+  local name, perm = after_date:match("^(.*) .+  (" .. PERM_TYPE_CLASS .. "?" .. PERM_CLASS .. ")(%s.*)$")
+  if name then return name, perm:sub(-9) end
+  local n2, p2 = after_date:match("^(.*) .+  (" .. PERM_TYPE_CLASS .. "?" .. PERM_CLASS .. ")$")
+  if n2 then return n2, p2:sub(-9) end
+  return after_date, nil
+end
+
 ---Split "<name>  <perms>  <rest>" (ref_id lines) into name and perms.
 ---Render puts the metadata after the filename:
----  /NNNNN name[  .rwxrwxrwx][ | size][ | DD/MM/YY HH:MM]
----so the perm block is the LAST 9-char [rwx-] run (with its optional
----ls-style type prefix) preceded by two spaces (greedy name match).
+---  /NNNNN name[ <git>  <perms>][ | size][ | DD/MM/YY HH:MM]
+---(with the git slot only when the git column is enabled) so the perm block
+---is the LAST 9-char [rwx-] run (with its optional ls-style type prefix).
+---Greedy name matching keeps the last split so names with spaces still work.
 ---Anything after it — the trailing size/date text or tampered junk — is
----ignored, never validated: size edits are always no-ops. The returned
+---ignored, never validated: size edits are always no-ops. The git slot
+---content is likewise ignored: git edits are silent no-ops. The returned
 ---perms are always the last 9 rwx characters; an edited type prefix is a
 ---silent no-op, never an action.
----Returns name, perms|nil. When the permission column is disabled the whole
----remainder is the name and perms is nil.
+---Returns name, perms|nil. When the permission column is disabled the git
+---slot (when enabled) is stripped and the remainder is the name; perms is nil.
 ---@param after_date string text after the "/NNNNN " token (date/size already stripped)
 ---@return string, string|nil
 local function split_name_perms(after_date)
+  if col_enabled("git") then
+    local name, perm = split_name_perms_with_git(after_date)
+    if perm then return name, perm end
+    -- No perm block found: fall through to git-strip so a perm-less line
+    -- still drops a trailing git slot instead of absorbing it into the name.
+  end
   local name, perm = after_date:match("^(.*)  (" .. PERM_TYPE_CLASS .. "?" .. PERM_CLASS .. ")(%s.*)$")
   if name then return name, perm:sub(-9) end
   local n2, p2 = after_date:match("^(.*)  (" .. PERM_TYPE_CLASS .. "?" .. PERM_CLASS .. ")$")
   if n2 then return n2, p2:sub(-9) end
+  if col_enabled("git") then
+    -- Permission block absent but git slot present ("<name> <git>"): strip
+    -- the trailing slot so it never becomes part of the name. Greedy name
+    -- keeps the LAST split, mirroring the perm path.
+    local gname = after_date:match("^(.*) .+%s*$")
+    if gname then return gname:gsub("%s+$", ""), nil end
+  end
   return after_date, nil
 end
 
