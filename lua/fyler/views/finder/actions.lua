@@ -57,15 +57,33 @@ local function _select(self, opener, opts)
     return true
   end
 
+  -- Whether the window is currently displaying any fyler buffer (any instance).
+  -- Such windows must never be reused as file targets: opening a file there
+  -- would clobber that instance's view. Without this, e.g. <C-v> from a second
+  -- panel reuses the first panel's window and the split opens beside the wrong
+  -- panel instead of beside the current one (like native :vsplit does).
+  local function is_fyler_win(winid)
+    if winid == nil then return false end
+    local ok, bufnr = pcall(vim.api.nvim_win_get_buf, winid)
+    return ok and bufnr ~= nil and vim.bo[bufnr].filetype == "fyler"
+  end
+
   local function get_target_window()
     -- When fyler stays open (should_close=false), never target the fyler window
-    -- itself — doing so would open the file inside fyler's buffer.
+    -- itself — doing so would open the file inside fyler's buffer. Other fyler
+    -- instances' windows are excluded too, for the same reason.
     local fyler_winid = not should_close and self.win.winid or nil
 
-    if is_usable_win(self.win.origin_win) and self.win.origin_win ~= fyler_winid then return self.win.origin_win end
+    if
+      is_usable_win(self.win.origin_win)
+      and self.win.origin_win ~= fyler_winid
+      and not is_fyler_win(self.win.origin_win)
+    then
+      return self.win.origin_win
+    end
 
     for _, winid in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
-      if is_usable_win(winid) and winid ~= fyler_winid then
+      if is_usable_win(winid) and winid ~= fyler_winid and not is_fyler_win(winid) then
         self.win.origin_win = winid
         return winid
       end
@@ -78,50 +96,23 @@ local function _select(self, opener, opts)
 
   local function open_in_window(winid)
     -- If a winid was passed in (e.g. from winpick), reject it if it's not usable
-    if winid and not is_usable_win(winid) then winid = nil end
+    -- or if it shows another fyler instance (see is_fyler_win above).
+    if winid and (not is_usable_win(winid) or is_fyler_win(winid)) then winid = nil end
     winid = winid or get_target_window()
 
     local fyler_win = self.win
     local created_window = false
 
-    -- When there is no usable window, create a new split to the right of fyler.
-    -- This handles both the "stay open" case and the "close on select" case when
-    -- all remaining windows have winfixbuf set (e.g. sidebar + opencode panel).
+    -- When there is no usable window, create a new split to the right of fyler
+    -- natively: no calculated width, no width-restoring autocmd — Neovim's own
+    -- window layout (equalalways / winfixwidth) decides the share, so this
+    -- behaves exactly like :vsplit from that panel (current panel's fyler
+    -- keeps its width if winfixwidth, the rest is distributed evenly).
     if not winid then
       local new_buf = vim.api.nvim_create_buf(false, true)
-      local fyler_width = fyler_win:config().width or math.floor(vim.o.columns * 0.25)
-      local fixed_others_width = 0
-      local seen_cols = {}
-      ---@type table<integer, integer>  winid -> saved width
-      local fixed_win_widths = {}
-      for _, wid in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
-        if
-          wid ~= fyler_win.winid
-          and vim.api.nvim_win_is_valid(wid)
-          and vim.api.nvim_win_get_config(wid).relative == ""
-          and vim.wo[wid].winfixwidth
-        then
-          local col = vim.api.nvim_win_get_position(wid)[2]
-          local w = vim.api.nvim_win_get_width(wid)
-          fixed_win_widths[wid] = w
-          if not seen_cols[col] then
-            seen_cols[col] = true
-            fixed_others_width = fixed_others_width + w + 1
-          end
-        end
-      end
-      fixed_win_widths[fyler_win.winid] = fyler_width
-      local new_width = math.max(vim.o.columns - fyler_width - 1 - fixed_others_width, 1)
-      local split_opts = { split = "right", width = new_width }
+      local split_opts = { split = "right" }
       if fyler_win.winid and vim.api.nvim_win_is_valid(fyler_win.winid) then split_opts.win = fyler_win.winid end
       winid = vim.api.nvim_open_win(new_buf, true, split_opts)
-      local new_winid = winid
-      vim.schedule(function()
-        for wid, w in pairs(fixed_win_widths) do
-          if vim.api.nvim_win_is_valid(wid) then vim.api.nvim_win_set_width(wid, w) end
-        end
-        if vim.api.nvim_win_is_valid(new_winid) then vim.api.nvim_win_set_width(new_winid, new_width) end
-      end)
       created_window = true
     end
 
@@ -933,15 +924,24 @@ function M.n_paste(self)
       local relative_cwd = Path.new(cwd)
       local display_ops = vim.tbl_map(function(op)
         local result = vim.deepcopy(op)
-        result.src = relative_cwd:relative(op.src) or op.src
-        result.dst = op.dst
+        local rel_src = relative_cwd:relative(op.src)
+        if rel_src then
+          result.src = rel_src
+          result.dst = relative_cwd:relative(op.dst) or op.dst
+        else
+          result.src = op.src
+          result.dst = op.dst
+        end
         return result
       end, operations)
 
       local get_confirmation = async.wrap(vim.schedule_wrap(function(...) require("fyler.input").confirm.open(...) end))
 
       local confirmed = get_confirmation(require("fyler.views.finder.ui").operations(display_ops))
-      if not confirmed then return end
+      if not confirmed then
+        self:dispatch_refresh()
+        return
+      end
 
       -- Execute sequentially, same pattern as run_mutation
       local fs = require("fyler.lib.fs")

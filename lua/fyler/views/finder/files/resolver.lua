@@ -192,7 +192,7 @@ function Resolver:_generate_actions(parsed_tree)
         local src_path = src_entry.link or src_entry.path
         for _, dst_entry in ipairs(dst_entries) do
           if dst_entry.path ~= src_path then
-            table.insert(actions, { type = "copy", src = src_path, dst = dst_entry.path })
+            table.insert(actions, { type = "copy", src = src_path, dst = dst_entry.path, cross_instance = true })
           end
         end
       end

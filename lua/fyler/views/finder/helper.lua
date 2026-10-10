@@ -72,27 +72,35 @@ end
 local DATE_PAT = "%d%d/%d%d/%d%d %d%d:%d%d"
 local SIZE_PAT = "[%d.]+[BKMGT]"
 
----Parse "/NNNNN name[  perms][ | size][ | date]" (each metadata field present
----per its column flag) into name, perms. The size region is never
----interpreted: a single trailing size block is stripped and anything else
----after the perm block is ignored, so size edits are silent no-ops. The date
----trails at the end of the line and is located by pattern (DD/MM/YY HH:MM);
----it cannot collide with a filename because names never contain "/".
+---Parse "/NNNNN name[  perms][ | size][ | date]" into name, perms. The
+---trailing date ("| DD/MM/YY HH:MM") and size ("| 123B") blocks are
+---display-only decorations: they are stripped by pattern whenever present,
+---but their absence is never an error. A pasted line may legitimately lack
+---them when it was copied from an instance with those columns hidden, so
+---requiring them would break cross-instance paste. Only permissions drive
+---actions — a missing perm block is NOT an error here either; the resolver
+---validates it separately so the message can name the field.
 ---@param line string full buffer line (must carry a ref_id)
 ---@return string|nil name, string|nil perms, string|nil err
----err is non-nil when the line is structurally invalid (missing trailing
----date while the date column is on). A missing perm block is NOT an error
----here — the resolver validates it separately so the message can name the
----field.
 function M.parse_entry(line)
   local after_ref = line:match("/%d%d%d%d%d+%s?(.*)$")
   if not after_ref then return nil, nil, "expected entry text after the id" end
   local rest = after_ref
   if col_enabled("creation_time") then
     local before = rest:match("^(.*)%s+|%s*" .. DATE_PAT .. "%s*$") or rest:match("^(.*)%s%s+" .. DATE_PAT .. "%s*$")
-    if not before then return nil, nil, "expected '<DD/MM/YY HH:MM>' date at the end of the entry" end
-    rest = before:gsub("%s+$", "")
-    if rest == "" then return nil, nil, "expected file name before the date" end
+    if before then
+      rest = before:gsub("%s+$", "")
+    elseif rest:match("^%s*|?%s*" .. DATE_PAT .. "%s*$") then
+      -- Remainder is only a date block: the entry text was wiped. This can
+      -- never be a legitimate filename (slashes), so abort instead of
+      -- parsing it as a nested garbage path.
+      return nil, nil, "expected entry text after the id"
+    end
+  end
+  if rest:gsub("%s+", "") == "" then
+    -- Bare id (or only decorations left): nothing to parse into a path.
+    -- Must abort so the caller rerenders instead of moving to a garbage path.
+    return nil, nil, "expected entry text after the id"
   end
   if col_enabled("size") then
     local no_size = rest:match("^(.*)%s+|%s*" .. SIZE_PAT .. "%s*$") or rest:match("^(.*)%s%s+" .. SIZE_PAT .. "%s*$")

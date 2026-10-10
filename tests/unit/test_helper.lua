@@ -240,9 +240,28 @@ T["date layout"]["parse_name keeps filename that looks like a size"] = function(
   equal(helper_mod.parse_name(line), "100B")
 end
 
-T["date layout"]["missing date is an error"] = function()
-  -- Trailing date destroyed: unrecoverable, must abort (not mutate).
+T["date layout"]["missing date is tolerated (cross-instance paste)"] = function()
+  -- A pasted line may lack the date when copied from an instance with the
+  -- date column hidden: name and perms still resolve, no error.
   local line = "  icon  /00036 my-file    .rw-r--r-- | 512B"
+  local name, perm, err = helper_mod.parse_entry(line)
+  equal(name, "my-file")
+  equal(perm, "rw-r--r--")
+  equal(err, nil)
+end
+
+T["date layout"]["missing date and size is tolerated (cross-instance paste)"] = function()
+  -- Copied from an instance showing only permissions: still valid.
+  local line = "  icon  /00016 assets/    drwxr-xr-x"
+  local name, perm, err = helper_mod.parse_entry(line)
+  equal(name, "assets/")
+  equal(perm, "rwxr-xr-x")
+  equal(err, nil)
+end
+
+T["date layout"]["date-only remainder is an error"] = function()
+  -- Nothing but a date after the id: nothing to parse, must abort.
+  local line = "  icon  /00037 04/10/26 13:11"
   local name, _, err = helper_mod.parse_entry(line)
   equal(name, nil)
   equal(err ~= nil, true)

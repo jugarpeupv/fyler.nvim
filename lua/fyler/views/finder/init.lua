@@ -490,6 +490,9 @@ end
 
 ---@return boolean
 local function can_skip_confirmation(operations)
+  for _, o in ipairs(operations) do
+    if o.cross_instance then return false end
+  end
   local count = { create = 0, delete = 0, move = 0, copy = 0, chmod = 0 }
 
   util.tbl_each(operations, function(o) count[o.type] = (count[o.type] or 0) + 1 end)
@@ -507,8 +510,14 @@ local function should_mutate(operations, cwd)
     if operation.type == "create" or operation.type == "delete" or operation.type == "chmod" then
       result.path = cwd:relative(operation.path) or operation.path
     else
-      result.src = cwd:relative(operation.src) or operation.src
-      result.dst = cwd:relative(operation.dst) or operation.dst
+      local rel_src = not operation.cross_instance and cwd:relative(operation.src)
+      if rel_src then
+        result.src = rel_src
+        result.dst = cwd:relative(operation.dst) or operation.dst
+      else
+        result.src = operation.src
+        result.dst = operation.dst
+      end
     end
     return result
   end)))
@@ -531,6 +540,8 @@ function Finder:dispatch_mutation()
 
     if should_mutate(operations, require("fyler.lib.path").new(self:getcwd())) then
       M.navigate(run_mutation(operations), { force_update = true })
+    else
+      self:dispatch_refresh()
     end
   end)
 end
