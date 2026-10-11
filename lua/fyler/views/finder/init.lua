@@ -12,7 +12,6 @@ local global_cwd = nil
 
 -- Instance registry: slot (integer) → Finder object.
 -- Declared here so all Finder methods defined below can close over it.
-local MAX_INSTANCES = 2
 local ORIG_SLOT = 1
 local instances = {}
 
@@ -546,14 +545,14 @@ function Finder:dispatch_mutation()
   end)
 end
 
----Allocate the next available secondary slot (lowest recycled or next integer, max MAX_INSTANCES).
----Returns nil when the cap is already reached.
----@return integer|nil
+---Allocate the next available secondary slot (lowest recycled or next integer >= 2).
+---@return integer
 local function next_secondary_slot()
-  for slot = 2, MAX_INSTANCES do
-    if not instances[slot] then return slot end
+  local slot = 2
+  while instances[slot] do
+    slot = slot + 1
   end
-  return nil
+  return slot
 end
 
 ---Get or create the finder instance for the given slot.
@@ -591,14 +590,10 @@ function M.instance(slot, dir)
 end
 
 ---Open a secondary instance in a split. kind must be "split_right" or "split_below".
----Respects the MAX_INSTANCES cap and recycles freed slots.
+---Recycles freed slots.
 ---@param kind WinKind
 function M.open_secondary(kind)
   local slot = next_secondary_slot()
-  if not slot then
-    vim.notify("[Fyler] Maximum number of instances (" .. MAX_INSTANCES .. ") already open.", vim.log.levels.WARN)
-    return
-  end
   M.instance(slot):open(kind)
 end
 
@@ -607,10 +602,6 @@ end
 ---@param winid integer  the window to open the secondary finder into
 function M.open_secondary_in_win(winid)
   local slot = next_secondary_slot()
-  if not slot then
-    vim.notify("[Fyler] Maximum number of instances (" .. MAX_INSTANCES .. ") already open.", vim.log.levels.WARN)
-    return
-  end
   vim.api.nvim_set_current_win(winid)
   M.instance(slot):open("replace")
 end
@@ -680,30 +671,11 @@ function M.open_at(dir, kind)
     return f
   end
 
-  -- Orig is open with a different dir — allocate or reuse a secondary
+  -- Orig is open with a different dir — allocate a secondary
   local slot = next_secondary_slot()
-  if slot then
-    local f = M.instance(slot, normalized)
-    f:open(kind)
-    return f
-  end
-  -- No empty secondary slot: try to reuse a closed secondary
-  for s = 2, MAX_INSTANCES do
-    local inst = instances[s]
-    if inst and not inst:isopen() then
-      if inst:getcwd() ~= normalized then
-        inst:change_root(normalized)
-        vim.schedule(function() inst:dispatch_refresh({ force_update = true }) end)
-      end
-      inst:open(kind)
-      return inst
-    end
-  end
-  vim.notify(
-    "[Fyler] Maximum number of instances (" .. MAX_INSTANCES .. ") already open. Close one first.",
-    vim.log.levels.WARN
-  )
-  return nil
+  local f = M.instance(slot, normalized)
+  f:open(kind)
+  return f
 end
 
 ---Toggle the finder instance for the given directory.

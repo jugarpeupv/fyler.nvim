@@ -71,7 +71,7 @@ function M.setup(opts)
 
   -- Fyler.API: Opens finder view with provided options
   -- When `dir` is provided, isolates per-instance: existing fyler buffers keep
-  -- their cwd, new instance is opened for the requested dir (respects MAX_INSTANCES).
+  -- their cwd, new instance is opened for the requested dir.
   M.open = function(args)
     args = args or {}
     if args.dir then
