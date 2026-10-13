@@ -770,6 +770,48 @@ M.navigate = vim.schedule_wrap(function(path, opts)
   end)
 end)
 
+---Reveal a path in THIS instance: expand parents, refresh, place the
+---cursor on the entry. Same behaviour as `M.navigate`, but scoped to
+---the receiver instead of always targeting ORIG_SLOT, so callers holding
+---a concrete view (e.g. a view mapping) reveal there.
+---@param path string|nil absolute path to reveal
+---@param opts table|nil
+Finder.reveal = vim.schedule_wrap(function(self, path, opts)
+  opts = opts or {}
+
+  local finder = self
+  if not finder:isopen() then return end
+  if finder.win then finder.win:focus() end
+
+  local set_cursor = vim.schedule_wrap(function(ref_id)
+    if finder:isopen() and ref_id then
+      vim.api.nvim_win_call(finder.win.winid, function() vim.fn.search(string.format("/%05d ", ref_id)) end)
+    end
+  end)
+
+  local update_table = async.wrap(function(...) finder.files:update(...) end)
+  local navigate_path = async.wrap(function(...) finder:navigate(...) end)
+
+  async.void(function()
+    if opts.force_update then update_table() end
+
+    local ref_id
+    if path then
+      local p = vim.fn.fnamemodify(Path.new(path):posix_path(), ":p")
+      ref_id = util.select_n(2, navigate_path(p))
+
+      if not ref_id then
+        local link = manager.find_link_path_from_resolved(p)
+        if link then ref_id = util.select_n(2, navigate_path(link)) end
+      end
+    end
+
+    opts.onrender = function() set_cursor(ref_id) end
+
+    finder:dispatch_refresh(opts)
+  end)
+end)
+
 ---Iterate all currently open Finder instances.
 ---@return fun(): Finder|nil
 function M.iter_instances()
