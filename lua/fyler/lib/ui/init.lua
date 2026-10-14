@@ -50,6 +50,21 @@ function Ui.new(win)
   }, Ui)
 end
 
+-- Whether the buffer already shows exactly `all_lines` (header included).
+-- One batched read + pure-Lua compare, far cheaper than a rewrite.
+---@private
+---@param all_lines string[]
+---@return boolean
+function Ui:_same_lines(all_lines)
+  if not self.win:has_valid_bufnr() then return false end
+  local current = vim.api.nvim_buf_get_lines(self.win.bufnr, 0, -1, false)
+  if #current ~= #all_lines then return false end
+  for i = 1, #all_lines do
+    if current[i] ~= all_lines[i] then return false end
+  end
+  return true
+end
+
 ---@param component UiComponent
 function Ui:render(component, ...)
   local opts = {}
@@ -89,9 +104,20 @@ function Ui:render(component, ...)
         return
       end
 
-      if not opts.partial then
-        if header then
-          local all_lines = vim.list_extend({ header }, lines)
+      -- Fast path: when the buffer already shows exactly these lines (e.g.
+      -- plain :w with no edits), skip the entire write phase. Rewriting
+      -- identical lines clears all extmarks for no benefit, flashing git
+      -- icons and highlights; re-adding highlights on top would additionally
+      -- stack duplicate extmarks. Identical lines mean zero pending mutation,
+      -- so the buffer is explicitly unmarked modified as set_lines would do.
+      -- (Pass 2 of the same cycle still refreshes extmarks with fresh data.)
+      local all_lines = header and vim.list_extend({ header }, lines) or nil
+      local skip_writes = all_lines ~= nil and not opts.partial and self:_same_lines(all_lines)
+
+      if skip_writes then
+        self.win:set_local_buf_option("modified", false)
+      elseif not opts.partial then
+        if all_lines then
           self.win:set_lines(0, -1, all_lines)
           self.win:set_extmark(0, 0, {
             end_col  = #header,
@@ -114,27 +140,29 @@ function Ui:render(component, ...)
         end
       end
 
-      for _, highlight in ipairs(highlights) do
-        -- stylua: ignore start
-        local extmark_opts = {
-          end_col   = highlight.col_end,
-          hl_group  = highlight.highlight_group,
-          priority  = highlight.priority,
-        }
-        if highlight.conceal ~= nil then extmark_opts.conceal = highlight.conceal end
-        self.win:set_extmark(highlight.line + line_offset, highlight.col_start, extmark_opts)
-        -- stylua: ignore end
-      end
+      if not skip_writes then
+        for _, highlight in ipairs(highlights) do
+          -- stylua: ignore start
+          local extmark_opts = {
+            end_col   = highlight.col_end,
+            hl_group  = highlight.highlight_group,
+            priority  = highlight.priority,
+          }
+          if highlight.conceal ~= nil then extmark_opts.conceal = highlight.conceal end
+          self.win:set_extmark(highlight.line + line_offset, highlight.col_start, extmark_opts)
+          -- stylua: ignore end
+        end
 
-      for _, extmark in ipairs(extmarks) do
-        -- stylua: ignore start
-        self.win:set_extmark(extmark.line + line_offset, 0, {
-          hl_mode           = extmark.hl_mode,
-          virt_text         = extmark.virt_text,
-          virt_text_pos     = extmark.virt_text_pos,
-          virt_text_win_col = extmark.virt_text_pos ~= "eol" and extmark.col or nil,
-        })
-        -- stylua: ignore end
+        for _, extmark in ipairs(extmarks) do
+          -- stylua: ignore start
+          self.win:set_extmark(extmark.line + line_offset, 0, {
+            hl_mode           = extmark.hl_mode,
+            virt_text         = extmark.virt_text,
+            virt_text_pos     = extmark.virt_text_pos,
+            virt_text_win_col = extmark.virt_text_pos ~= "eol" and extmark.col or nil,
+          })
+          -- stylua: ignore end
+        end
       end
 
       self._lock:release()

@@ -53,8 +53,8 @@ T["DirSize"]["Shows Exact File Sizes"] = function()
 
   local line = find_line("afile")
   equal(line ~= nil, true)
-  -- Git slot is real text before the perm block: "afile <git>  .rw-r--r--".
-  equal(line:match("afile .  %.rw%-r%--r%-- | 1000B |") ~= nil, true)
+  -- No real-text git slot: "afile  .rw-r--r-- | 1000B | …".
+  equal(line:match("afile  %.rw%-r%--r%-- | 1000B |") ~= nil, true)
 end
 
 T["DirSize"]["Shows Directory Entry Size Ls Style"] = function()
@@ -66,10 +66,9 @@ T["DirSize"]["Shows Directory Entry Size Ls Style"] = function()
 
   -- Like `ls -la`: a directory shows its own entry size (platform-dependent
   -- value) with a 'd' type prefix — assert the size block is present.
-  -- The git slot sits between the name and the perm block.
   local line = find_line("subdir/")
   equal(line ~= nil, true)
-  equal(line:match("subdir/ .  drwxr%-xr%-x | ") ~= nil, true)
+  equal(line:match("subdir/  drwxr%-xr%-x | ") ~= nil, true)
   equal(line:match("| [%d.]+[BKMGT] |") ~= nil, true)
 end
 

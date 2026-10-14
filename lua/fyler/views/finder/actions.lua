@@ -935,6 +935,14 @@ function M.n_paste(self)
         return
       end
 
+      -- The paste below already refreshes affected instances explicitly once
+      -- it completes; suppress the fs-watch echoes of our own writes so they
+      -- don't trigger a second full refresh (double flicker).
+      local finder_mod = require("fyler.views.finder")
+      for inst in finder_mod.iter_instances() do
+        if inst and inst.watcher then inst.watcher:suppress() end
+      end
+
       -- Execute sequentially, same pattern as run_mutation
       local fs = require("fyler.lib.fs")
       local spinner = require("fyler.lib.spinner").new(string.format("Pasting (0/%d)", #operations))
@@ -959,7 +967,6 @@ function M.n_paste(self)
       -- destination, so that any visible instance (e.g. the original when pasting
       -- from a secondary) immediately shows the new files.
       local dsts = vim.tbl_map(function(op) return op.dst end, operations)
-      local finder_mod = require("fyler.views.finder")
       vim.schedule(function()
         for inst in finder_mod.iter_instances() do
           if inst and inst:isopen() then

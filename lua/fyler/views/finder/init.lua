@@ -416,6 +416,10 @@ function Finder:dispatch_refresh(opts)
   -- rewriting buffer lines. Avoids the flicker caused by set_lines when the
   -- file tree has not changed (e.g. after a git commit/add/reset).
   if opts.git_only then
+    -- This path only runs on git-dir events, which by definition change git
+    -- state: drop the cached status so Pass 2 recomputes it. All other
+    -- refreshes reuse the cache within its TTL (see lib/git.lua).
+    require("fyler.lib.git").invalidate(self:getcwd())
     vim.schedule(function()
       require("fyler.views.finder.ui").refresh_details(
         self.files:totable(),
@@ -454,6 +458,16 @@ function Finder:dispatch_refresh(opts)
       )
     end)
   end)
+end
+
+---Suppress fs-watch echoes of our own writes on every open instance.
+---The mutation below already refreshes explicitly once it completes; without
+---this, the filesystem events our own writes generate trigger a second full
+---refresh ~200ms later (visible as a double flicker of git icons).
+local function suppress_watch_echoes()
+  for inst in M.iter_instances() do
+    if inst and inst.watcher then inst.watcher:suppress() end
+  end
 end
 
 local function run_mutation(operations)
@@ -538,6 +552,7 @@ function Finder:dispatch_mutation()
     if vim.tbl_isempty(operations) then return self:dispatch_refresh() end
 
     if should_mutate(operations, require("fyler.lib.path").new(self:getcwd())) then
+      suppress_watch_echoes()
       M.navigate(run_mutation(operations), { force_update = true })
     else
       self:dispatch_refresh()

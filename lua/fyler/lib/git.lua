@@ -142,38 +142,112 @@ local icon_hl_map = {
   Ignored   = "FylerGitIconIgnored",
 }
 
+-- Per-repo status cache. Git state changes rarely relative to refreshes:
+-- every expand/collapse/toggle re-renders and would otherwise respawn two
+-- git subprocesses. Entries are dropped explicitly via M.invalidate on git
+-- events (the git_only refresh path) and expire after CACHE_TTL_MS as a
+-- backstop for setups with the watcher disabled.
+local CACHE_TTL_MS = 2000
+local status_cache = {} -- root_dir -> { modified = {}, ignored = {}, t = ms }
+
+---@param root_dir string
+local function cache_get(root_dir)
+  local entry = status_cache[root_dir]
+  if not entry then return nil end
+  if vim.uv.hrtime() / 1e6 - entry.t > CACHE_TTL_MS then
+    status_cache[root_dir] = nil
+    return nil
+  end
+  return entry
+end
+
+---Drop cached git state for one repo root, or for all roots when called
+---without arguments (e.g. tests).
+---@param root_dir string|nil
+function M.invalidate(root_dir)
+  if root_dir then
+    status_cache[root_dir] = nil
+  else
+    status_cache = {}
+  end
+end
+
+-- Inherit an untracked/ignored status from the nearest ancestor directory.
+-- git status --porcelain only reports the top-level directory for fully
+-- untracked trees, so child entries have no direct status in the map.
+-- Walking the entry's own ancestors is O(depth) instead of scanning the
+-- whole status map per entry, and nearest-ancestor wins deterministically.
+---@param status_map table<string, string>
+---@param path string absolute entry path
+---@return string|nil
+local function inherit_dir_status(status_map, path)
+  local parent = path:match("^(.+)/[^/]+$")
+  while parent do
+    local dir_status = status_map[parent]
+    if dir_status == "??" or dir_status == "!!" then return dir_status end
+    local grandparent = parent:match("^(.+)/[^/]+$")
+    if not grandparent or grandparent == parent then break end
+    parent = grandparent
+  end
+  return nil
+end
+
+-- Build the per-entry { symbol, icon_hl, name_hl } triples from a merged
+-- status map (porcelain XY code keyed by absolute path).
+---@param entries string[]
+---@param status_map table<string, string>
+local function build_result(entries, status_map)
+  return util.tbl_map(entries, function(e)
+    local status = status_map[e]
+    if not status then status = inherit_dir_status(status_map, e) end
+    local status_name = decode_xy(status)
+    return {
+      config.values.views.finder.columns.git.symbols[status_name] or "",
+      icon_hl_map[status_name],
+      hl_map[status_name],
+    }
+  end)
+end
+
 function M.map_entries_async(root_dir, entries, _next)
-  M.build_modified_lookup_for_async(root_dir, function(modified_lookup)
-    M.build_ignored_lookup_for_async(root_dir, entries, function(ignored_lookup)
-      local status_map = util.tbl_merge_force(modified_lookup, ignored_lookup)
-      local result = util.tbl_map(
-        entries,
-        function(e)
-          local status = status_map[e]
-          -- If this entry has no direct status, check if it's inside an
-          -- untracked or ignored directory. git status --porcelain only reports
-          -- the top-level directory for fully untracked trees, so child entries
-          -- won't have their own status in the map.  Symlink entries whose
-          -- resolved target is outside the repo are also absent from the map;
-          -- they inherit ignored status from the nearest ignored ancestor.
-          if not status then
-            for dir_path, dir_status in pairs(status_map) do
-              if (dir_status == "??" or dir_status == "!!") and vim.startswith(e, dir_path .. "/") then
-                status = dir_status
-                break
-              end
-            end
-          end
-          local status_name = decode_xy(status)
-          return {
-            config.values.views.finder.columns.git.symbols[status_name] or "",
-            icon_hl_map[status_name],
-            hl_map[status_name],
-          }
-        end
-      )
-      _next(result)
+  local cached = cache_get(root_dir)
+  if cached then
+    local status_map = util.tbl_merge_force(cached.modified, cached.ignored)
+    -- Entries never seen by check-ignore (e.g. a freshly expanded subtree)
+    -- need a top-up lookup; in steady state this list is empty and no
+    -- subprocess spawns at all.
+    local missing = {}
+    for _, e in ipairs(entries) do
+      if not cached.ignored[e] and not cached.modified[e] and not inherit_dir_status(status_map, e) then
+        table.insert(missing, e)
+      end
+    end
+    if #missing == 0 then return _next(build_result(entries, status_map)) end
+    M.build_ignored_lookup_for_async(root_dir, missing, function(extra)
+      for path, code in pairs(extra) do
+        cached.ignored[path] = code
+      end
+      _next(build_result(entries, util.tbl_merge_force(cached.modified, cached.ignored)))
     end)
+    return
+  end
+
+  -- No valid cache: the two git subprocesses are independent, so run them
+  -- in parallel (wall time = slowest, not sum) instead of serially.
+  local modified_lookup, ignored_lookup, pending = nil, nil, 2
+  local function join()
+    pending = pending - 1
+    if pending > 0 then return end
+    status_cache[root_dir] = { modified = modified_lookup, ignored = ignored_lookup, t = vim.uv.hrtime() / 1e6 }
+    _next(build_result(entries, util.tbl_merge_force(modified_lookup, ignored_lookup)))
+  end
+  M.build_modified_lookup_for_async(root_dir, function(lookup)
+    modified_lookup = lookup
+    join()
+  end)
+  M.build_ignored_lookup_for_async(root_dir, entries, function(lookup)
+    ignored_lookup = lookup
+    join()
   end)
 end
 

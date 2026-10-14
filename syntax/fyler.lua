@@ -8,8 +8,8 @@ vim.cmd([[
   syn match FylerReferenceId /\/\d\{5,} / conceal
   " Permissions are ls-style 10-char blocks (".rw-r--r--", "drwxr-xr-x")
   " sitting after the filename with the size/date text trailing behind
-  " them. A real-text git status slot may precede them (" ?  .rw-r--r--"),
-  " so anchor on a single leading space instead of two.
+  " them. Git status is virtual text (never buffer text), so buffer lines
+  " always look the same: anchor on a single leading space.
   syn match FylerPermissions / \zs[%.dlcbps?-]\?[rwx-]\{9}\ze\(\s\|$\)/ containedin=ALL
 
   let b:current_syntax = "Fyler"

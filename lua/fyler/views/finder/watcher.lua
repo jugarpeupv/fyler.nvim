@@ -10,10 +10,28 @@ local git = require("fyler.lib.git")
 ---@field git_dir string|nil
 ---@field git_common_dir string|nil
 ---@field finder Finder
+---@field _suppress_until number|nil ms timestamp (hrtime) until which fs events are ignored
 local Watcher = {}
 Watcher.__index = Watcher
 
 local instance = {}
+
+---Suppress fs-event refreshes for `ms` milliseconds. Call before applying
+---our own mutations: the filesystem events our own writes generate would
+---otherwise trigger a redundant second full refresh (visible as a double
+---flicker), since the mutation path already refreshes explicitly once the
+---operations complete. External changes inside the window are picked up by
+---the next event or refresh; keep the window short (default 800ms).
+---@param ms integer|nil
+function Watcher:suppress(ms)
+  self._suppress_until = vim.uv.hrtime() / 1e6 + (ms or 800)
+end
+
+---@private
+---@return boolean
+function Watcher:_suppressed()
+  return self._suppress_until ~= nil and vim.uv.hrtime() / 1e6 < self._suppress_until
+end
 
 ---@return Watcher
 function Watcher.new(finder)
@@ -42,6 +60,9 @@ function Watcher:start(dir)
 
   self.paths[dir].fsevent:start(dir, {}, function(err, filename)
     if err then return end
+
+    -- Drop echoes of our own mutations (see Watcher:suppress).
+    if self:_suppressed() then return end
 
     if
       filename == nil

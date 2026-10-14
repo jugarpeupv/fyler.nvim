@@ -236,14 +236,21 @@ function Renderer:_render_row(component)
   local current_col = 0
   local max_lines_in_row = 0
 
-  -- First pass: calculate how many lines this row will need
+  -- First pass: calculate how many lines this row will need.
+  -- Components know their own height exactly (text = 1 line, row = tallest
+  -- child, column = sum of children), so no trial render is needed. The old
+  -- code rendered every column into a throwaway Renderer (plus deepcopies)
+  -- just to count lines — pure waste on every render.
   for _, child in ipairs(component.children) do
     if child.tag == "column" then
-      local column_height = 0
-      -- Count lines in column by simulating render
-      local temp_renderer = Renderer.new()
-      temp_renderer:render(child)
-      column_height = #temp_renderer.line
+      local ok, column_height = pcall(function() return child:height() end)
+      if not ok or type(column_height) ~= "number" then
+        -- Hand-built component without the UiComponent metatable (or an
+        -- unknown shape): fall back to measuring via a trial render.
+        local temp_renderer = Renderer.new()
+        temp_renderer:render(child)
+        column_height = #temp_renderer.line
+      end
       if column_height > max_lines_in_row then max_lines_in_row = column_height end
     else
       max_lines_in_row = math.max(max_lines_in_row, 1)

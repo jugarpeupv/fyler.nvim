@@ -168,18 +168,39 @@ function Win:set_extmark(row, col, options)
   -- Clamp end_col to the actual line length to avoid "out of range" errors
   -- that can occur when highlights are applied after a buffer update races
   -- with the renderer's column values.
-  if options.end_col ~= nil then
-    local line = vim.api.nvim_buf_get_lines(self.bufnr, row, row + 1, false)[1]
-    if line then
-      options.end_col = math.min(options.end_col, #line)
-    end
-  end
+  if options.end_col ~= nil then options.end_col = math.min(options.end_col, self:_line_length(row)) end
 
   local id = vim.api.nvim_buf_set_extmark(self.bufnr, self.namespace, row, col, options)
 
   if not self._extmark_ids then self._extmark_ids = {} end
   if not self._extmark_ids[row] then self._extmark_ids[row] = {} end
   table.insert(self._extmark_ids[row], id)
+end
+
+-- Byte length of a buffer line, backed by a snapshot cache keyed on the
+-- buffer's changedtick: a full render applies ~5 extmarks per entry, and a
+-- per-call nvim_buf_get_lines turns that into thousands of API roundtrips.
+-- The snapshot is rebuilt at most once per buffer change.
+---@private
+---@param row integer 0-indexed buffer line
+---@return integer
+function Win:_line_length(row)
+  local tick = vim.api.nvim_buf_get_changedtick(self.bufnr)
+  local cache = self._line_len_cache
+  if not cache or cache.tick ~= tick then
+    cache = { tick = tick, lens = {} }
+    local lines = vim.api.nvim_buf_get_lines(self.bufnr, 0, -1, false)
+    for i, line in ipairs(lines) do
+      cache.lens[i - 1] = #line
+    end
+    self._line_len_cache = cache
+  end
+  local len = cache.lens[row]
+  if len ~= nil then return len end
+  -- Row beyond the snapshot (buffer changed under us after the snapshot):
+  -- fall back to a single direct read, as before.
+  local line = vim.api.nvim_buf_get_lines(self.bufnr, row, row + 1, false)[1]
+  return line and #line or 0
 end
 
 function Win:focus()

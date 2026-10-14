@@ -21,19 +21,43 @@ local M = {}
 -- removes staged status) don't linger.
 M.highlight_cache = {}
 
--- Cache of ref_id → { symbol, icon_hl } from the last completed git pass.
--- Used in Pass 1 to pre-fill the real-text git slot so entries never flash
--- with a blank slot before the async git lookup arrives.
--- Cleared per-entry before each update alongside highlight_cache.
-M.git_cache = {}
+-- Per-render stat cache: at most one lstat + one stat per path per
+-- refresh. Pass 1 stats each visible entry up to 4 times (permissions,
+-- size, date, executable bit); without the cache a 500-entry directory
+-- costs ~2000 syscalls per refresh. The cache is created fresh for every
+-- M.files / refresh_details run and never outlives it, so it cannot go
+-- stale across filesystem changes.
+local function new_stat_cache()
+  local lstats, stats = {}, {}
+  return {
+    lstat = function(path)
+      local st = lstats[path]
+      if st == nil then
+        st = Path.new(path):lstats() or false
+        lstats[path] = st
+      end
+      return st or nil
+    end,
+    stat = function(path)
+      local st = stats[path]
+      if st == nil then
+        st = Path.new(path):stats() or false
+        stats[path] = st
+      end
+      return st or nil
+    end,
+  }
+end
 
 -- Returns the 10-char permission string for a path, ls-style: a file-type
 -- character followed by the 9 rwx bits (".rw-r--r--", "drwxr-xr-x", ...).
 -- Regular files use "." (eza style). The type character comes from the same
 -- stat call, no extra queries.
 -- Always returns exactly 10 characters so the inline column is fixed-width.
-local function get_permissions(path)
-  local stat = Path.new(path):lstats()
+---@param path string
+---@param cache table|nil per-render stat cache from new_stat_cache()
+local function get_permissions(path, cache)
+  local stat = cache and cache.lstat(path) or Path.new(path):lstats()
   if not stat then return ".---------" end
 
   local type_char = ({
@@ -64,8 +88,10 @@ end
 -- Returns size in bytes straight from the stat (ls -la style: directories
 -- show their own entry size, not a recursive total), or nil when missing.
 -- Rendered as real buffer text (not virtual text) so it is always visible.
-local function get_size_bytes(path)
-  local stat = Path.new(path):stats()
+---@param path string
+---@param cache table|nil per-render stat cache from new_stat_cache()
+local function get_size_bytes(path, cache)
+  local stat = cache and cache.stat(path) or Path.new(path):stats()
   if not stat then return nil end
 
   return stat.size
@@ -88,8 +114,10 @@ local function format_size_bytes(bytes)
 end
 
 -- Birthtime (ctime on Linux) as "DD/MM/YY HH:MM" (14 chars), or "".
-local function format_date(path)
-  local stat = vim.uv.fs_stat(path)
+---@param path string
+---@param cache table|nil per-render stat cache from new_stat_cache()
+local function format_date(path, cache)
+  local stat = cache and cache.stat(path) or vim.uv.fs_stat(path)
   if not stat then return "" end
   local t = _is_linux and stat.ctime or stat.birthtime
   if not t then return "" end
@@ -107,10 +135,6 @@ end
 
 local function perm_enabled()
   return config.values.views.finder.columns.permission and config.values.views.finder.columns.permission.enabled
-end
-
-local function git_enabled()
-  return config.values.views.finder.columns.git and config.values.views.finder.columns.git.enabled
 end
 
 -- Convert a 9-char rwxrwxrwx string back to an integer mode (lower 9 bits).
@@ -148,7 +172,43 @@ end
 -- "name" (default) | "creation_time"
 local sort_order = "name"
 
-local function sort_nodes(nodes)
+-- Memoized natural-sort key: pad_numbers is a pure function of the name,
+-- so the key is computed once per distinct name instead of once per
+-- comparison (O(n) instead of O(n log n) gsub allocations).
+local pad_cache = {}
+local function pad_numbers(str)
+  local cached = pad_cache[str]
+  if cached == nil then
+    cached = str:gsub("%d+", function(n) return string.format("%010d", n) end)
+    pad_cache[str] = cached
+  end
+  return cached
+end
+
+---@param nodes table[]
+---@param cache table|nil per-render stat cache from new_stat_cache()
+local function sort_nodes(nodes, cache)
+  if sort_order == "creation_time" then
+    -- Stat once per entry up front: the old code statted inside the
+    -- comparator, turning every refresh into O(n log n) syscalls.
+    local times = {}
+    for _, n in ipairs(nodes) do
+      times[n] = _creation_time(cache and cache.stat(n.path) or vim.uv.fs_stat(n.path))
+    end
+    table.sort(nodes, function(x, y)
+      local x_is_dir = x.type == "directory"
+      local y_is_dir = y.type == "directory"
+      if x_is_dir and not y_is_dir then
+        return true
+      elseif not x_is_dir and y_is_dir then
+        return false
+      else
+        -- ascending: newer items (higher time) appear first
+        return times[x] > times[y]
+      end
+    end)
+    return nodes
+  end
   table.sort(nodes, function(x, y)
     local x_is_dir = x.type == "directory"
     local y_is_dir = y.type == "directory"
@@ -157,34 +217,26 @@ local function sort_nodes(nodes)
     elseif not x_is_dir and y_is_dir then
       return false
     else
-      if sort_order == "creation_time" then
-        local bx = _creation_time(vim.uv.fs_stat(x.path))
-        local by = _creation_time(vim.uv.fs_stat(y.path))
-        -- ascending: newer items (higher time) appear first
-        return bx > by
-      end
-      local function pad_numbers(str)
-        return str:gsub("%d+", function(n) return string.format("%010d", n) end)
-      end
       return pad_numbers(x.name) < pad_numbers(y.name)
     end
   end)
   return nodes
 end
 
-local function flatten_tree(node, depth, result, parent_ignored)
+---@param cache table|nil per-render stat cache from new_stat_cache()
+local function flatten_tree(node, depth, result, parent_ignored, cache)
   depth = depth or 0
   result = result or {}
 
   if not node or not node.children then return result end
 
-  local sorted_items = sort_nodes(node.children)
+  local sorted_items = sort_nodes(node.children, cache)
   for _, item in ipairs(sorted_items) do
     local is_ignored = parent_ignored
       or (item.ref_id and M.highlight_cache[item.ref_id] == "FylerFSIgnored")
       or (item.ref_id and M.highlight_cache[item.ref_id] == "FylerGitIgnored")
     table.insert(result, { item = item, depth = depth, ignored = is_ignored })
-    if item.children and #item.children > 0 then flatten_tree(item, depth + 1, result, is_ignored) end
+    if item.children and #item.children > 0 then flatten_tree(item, depth + 1, result, is_ignored, cache) end
   end
 
   return result
@@ -198,17 +250,18 @@ local EXEC_ICON = vim.fn.nr2char(0xE795)
 ---Whether the entry is an executable file (any of the owner/group/other
 ---execute bits set). Directories are never treated as executable.
 ---@param item table
+---@param cache table|nil per-render stat cache from new_stat_cache()
 ---@return boolean
-local function is_executable(item)
+local function is_executable(item, cache)
   if item.type == "directory" then return false end
-  local stat = Path.new(item.link or item.path):stats()
+  local stat = cache and cache.stat(item.link or item.path) or Path.new(item.link or item.path):stats()
   if not stat or not stat.mode then return false end
   local perm = stat.mode % 512
   return perm % 2 == 1 or math.floor(perm / 8) % 2 == 1 or math.floor(perm / 64) % 2 == 1
 end
 
 ---@return string|nil, string|nil, boolean
-local function icon_and_hl(item)
+local function icon_and_hl(item, cache)
   local icon, hl = config.icon_provider(item.type, item.path)
   if config.values.integrations.icon == "none" then return icon, hl, false end
 
@@ -222,7 +275,7 @@ local function icon_and_hl(item)
     return icon, hl, false
   end
 
-  if is_executable(item) then
+  if is_executable(item, cache) then
     local icons = config.values.views.finder.icon
     return icons.executable or EXEC_ICON, "FylerExecutable", true
   end
@@ -268,49 +321,38 @@ M.get_permissions = get_permissions
 M.perms_to_mode = perms_to_mode
 
 -- Build one files_column Row for an entry.
--- Display order: <icon> <name> <git> <perms> | <size> | <date>
--- (ref_id concealed). The git slot is real buffer text placed before the
--- permission block: "<name> <git>  <perms>" (one space before the
--- single-char status symbol, two after). Further blocks join with " | ".
+-- Display order: <icon> <name> <perms> | <size> | <date>
+-- (ref_id concealed). Buffer text is fully determined by Pass 1: git
+-- status rides as virtual text (see columns.git), so Pass 2 never rewrites
+-- buffer lines and always renders partial (extmarks only).
 -- Each optional field is omitted when its column is off, leaving no gap.
--- Children indices: 1 indent, 2 icon, 3 ref_id, 4 name, 5 git, 6 perms,
--- 7 size, 8 date.
+-- Children indices: 1 indent, 2 icon, 3 ref_id, 4 name, 5 perms,
+-- 6 size, 7 date.
 ---@param item table
 ---@param depth integer
 ---@param icon string
 ---@param icon_highlight string|nil
 ---@param name_highlight string|nil
----@param use_git_cache boolean|nil pre-fill the git slot from M.git_cache (default true)
+---@param cache table|nil per-render stat cache from new_stat_cache()
 ---@return table Row component
-local function build_entry_row(item, depth, icon, icon_highlight, name_highlight, use_git_cache)
-  local show_git = git_enabled()
+local function build_entry_row(item, depth, icon, icon_highlight, name_highlight, cache)
   local show_perm = perm_enabled()
   local show_size = size_enabled()
   local show_date = date_enabled()
+  local stat_path = item.link or item.path
   local indentation_text = Text(string.rep(" ", 2 * depth))
   local icon_text = Text(icon, { highlight = icon_highlight })
   local ref_id_text = item.ref_id and Text(string.format("/%05d ", item.ref_id), { conceal = "" }) or Text("")
   local name_text = Text(item.name .. (item.type == "directory" and "/" or ""), { highlight = name_highlight })
   local sep = "  "
-  local git_text = Text("")
-  if show_git then
-    local cached = (use_git_cache ~= false) and item.ref_id and M.git_cache[item.ref_id] or nil
-    local symbol = (cached and cached.symbol and cached.symbol ~= "") and cached.symbol or " "
-    local opt = nil
-    if cached and cached.icon_hl and symbol ~= " " then opt = { highlight = cached.icon_hl } end
-    git_text = Text(" " .. symbol, opt)
-    sep = " | "
-  end
   local perm_text = Text("")
   if show_perm then
-    local joiner = show_git and "  " or sep
-    perm_text =
-      Text(joiner .. get_permissions(item.link or item.path), { highlight = "FylerPermissions", priority = 200 })
+    perm_text = Text(sep .. get_permissions(stat_path, cache), { highlight = "FylerPermissions", priority = 200 })
     sep = " | "
   end
   local size_text = Text("")
   if show_size then
-    local size_str = format_size_bytes(get_size_bytes(item.link or item.path)):gsub("^%s+", "")
+    local size_str = format_size_bytes(get_size_bytes(stat_path, cache)):gsub("^%s+", "")
     if size_str ~= "" then
       size_text = Text(sep .. size_str, { highlight = "FylerSize" })
       sep = " | "
@@ -318,10 +360,10 @@ local function build_entry_row(item, depth, icon, icon_highlight, name_highlight
   end
   local date_text = Text("")
   if show_date then
-    local date_str = format_date(item.link or item.path)
+    local date_str = format_date(stat_path, cache)
     if date_str ~= "" then date_text = Text(sep .. date_str, { highlight = "FylerPermissions" }) end
   end
-  return Row({ indentation_text, icon_text, ref_id_text, name_text, git_text, perm_text, size_text, date_text })
+  return Row({ indentation_text, icon_text, ref_id_text, name_text, perm_text, size_text, date_text })
 end
 
 -- NOTE: Detail columns now return data via callback instead of directly updating UI
@@ -345,14 +387,13 @@ local columns = {
     _next({ column = column, highlights = {} })
   end,
 
-  -- Git status is rendered as REAL buffer text in the files Row (a single-char
-  -- slot before the permission block), not as virtual text — so there is
-  -- intentionally no virt_text column here. This async step only resolves the
-  -- per-entry { symbol, icon_hl, name_hl }; collect_and_render_details patches
-  -- the real-text git slot in files_column and re-renders buffer lines.
+  -- Git status renders as virtual text at the end of the line (like the
+  -- link and diagnostic columns), never as real buffer text. Pass 2 therefore
+  -- only refreshes extmarks and always renders partial: buffer lines are
+  -- written exactly once per refresh, in Pass 1.
   git = function(ctx, _, _next)
     git.map_entries_async(ctx.root_dir, ctx.get_all_paths(), function(entries)
-      local highlights, symbols = {}, {}
+      local highlights, column = {}, {}
 
       for i, get_entry in ipairs(entries) do
         local entry_data = ctx.get_entry_data(i)
@@ -367,10 +408,15 @@ local columns = {
           end
           highlights[i] = name_hl or ((entry_data.type == "directory") and "FylerFSDirectoryName" or nil)
         end
-        symbols[i] = { symbol = get_entry[1], icon_hl = get_entry[2] }
+        local symbol, icon_hl = get_entry[1], get_entry[2]
+        if symbol and symbol ~= "" then
+          table.insert(column, Text(nil, { virt_text = { { symbol, icon_hl } }, virt_text_pos = "eol" }))
+        else
+          table.insert(column, Text(nil, { virt_text = { { "" } } }))
+        end
       end
 
-      _next({ symbols = symbols, highlights = highlights })
+      _next({ column = column, highlights = highlights })
     end)
   end,
 
@@ -434,19 +480,19 @@ local function collect_and_render_details(tag, context, files_column, oncollect)
       end
 
       for index, highlight in pairs(all_highlights) do
-        -- children: 1 indent, 2 icon, 3 ref_id, 4 name, 5 git, 6 perms, 7 size, 8 date.
+        -- children: 1 indent, 2 icon, 3 ref_id, 4 name, 5 perms, 6 size, 7 date.
         local row = files_column[index]
         if row and row.children then
           local name_component = row.children[4]
           if name_component then
             -- Executable styling wins: never overwrite an executable file's
-            -- name with a detail (git) highlight.
+            -- name with a detail (git) highlight. is_exec was computed (and
+            -- its stat cached) in Pass 1, so this costs no extra syscall.
             local entry = context.entries[index]
-            local item = entry and entry.item
-            if item and item.type ~= "directory" and is_executable(item) then goto continue_name end
-            name_component.option = name_component.option or {}
-            name_component.option.highlight = highlight
-            ::continue_name::
+            if entry and not entry.is_exec then
+              name_component.option = name_component.option or {}
+              name_component.option.highlight = highlight
+            end
           end
         end
       end
@@ -456,47 +502,15 @@ local function collect_and_render_details(tag, context, files_column, oncollect)
       -- First clear every currently-visible entry so files whose git status has
       -- been removed (e.g. after git commit) don't keep a stale highlight.
       for _, e in ipairs(context.entries) do
-        if e.item and e.item.ref_id then
-          M.highlight_cache[e.item.ref_id] = nil
-          M.git_cache[e.item.ref_id] = nil
-        end
+        if e.item and e.item.ref_id then M.highlight_cache[e.item.ref_id] = nil end
       end
       for index, highlight in pairs(all_highlights) do
         local e = context.entries[index]
         if e and e.item and e.item.ref_id then M.highlight_cache[e.item.ref_id] = highlight end
       end
 
-      -- Patch the real-text git slot (child 5) with the resolved symbols.
-      -- files_column rows were rendered in Pass 1 with a blank placeholder so
-      -- buffer columns stay aligned before the async lookup arrives.
-      local git_result = results.git
-      local git_patched = false
-      if git_result and git_result.symbols then
-        for index, sym in pairs(git_result.symbols) do
-          local row = files_column[index]
-          if row and row.children then
-            local git_component = row.children[5]
-            if git_component then
-              local symbol = (sym.symbol and sym.symbol ~= "") and sym.symbol or " "
-              -- Child 5 layout is " <git>": rebuild it wholesale. Never
-              -- splice the previous value (e.g. :sub byte chopping), which
-              -- corrupts multi-byte nerd-font symbols configured by the user.
-              git_component.value = " " .. symbol
-              if sym.icon_hl and symbol ~= " " then
-                git_component.option = git_component.option or {}
-                git_component.option.highlight = sym.icon_hl
-              end
-              git_patched = true
-            end
-          end
-          local e = context.entries[index]
-          if e and e.item and e.item.ref_id then M.git_cache[e.item.ref_id] = sym end
-        end
-      end
-
       local detail_columns = { Column(files_column) }
       for _, col_name in ipairs(COLUMN_ORDER) do
-        if col_name == "git" then goto continue_column end
         local result = results[col_name]
         if result and result.column then
           -- Prepend a small gap to the first virt_text chunk of each entry so
@@ -516,17 +530,11 @@ local function collect_and_render_details(tag, context, files_column, oncollect)
 
           table.insert(detail_columns, Column(result.column))
         end
-        ::continue_column::
       end
 
-      if git_patched then
-        -- Git lives in real buffer text: rewrite the lines. Other detail
-        -- columns ride along as extmarks in the same full render so nothing
-        -- is clobbered by competing partial renders.
-        oncollect({ tag = "files", children = { Row(detail_columns) } })
-      else
-        oncollect({ tag = "files", children = { Row(detail_columns) } }, { partial = true })
-      end
+      -- Buffer lines are already final from Pass 1 (git is virtual text
+      -- now): only extmarks are refreshed, never buffer lines.
+      oncollect({ tag = "files", children = { Row(detail_columns) } }, { partial = true })
     end
   end
 
@@ -549,13 +557,16 @@ M.files = Component.new_async(function(node, onupdate)
   if not node or not node.children then return onupdate({ tag = "files", children = {} }) end
 
   local files_column = {}
+  local stat_cache = new_stat_cache()
 
-  local flattened_entries = flatten_tree(node)
+  local flattened_entries = flatten_tree(node, nil, nil, nil, stat_cache)
   if #flattened_entries == 0 then return onupdate({ tag = "files", children = { Row({ Column(files_column) }) } }) end
 
   for _, entry in ipairs(flattened_entries) do
     local item, depth = entry.item, entry.depth
-    local icon, hl, is_exec = icon_and_hl(item)
+    local icon, hl, is_exec = icon_and_hl(item, stat_cache)
+    -- Stash for Pass 2 (highlight patching) so it never re-stats.
+    entry.is_exec = is_exec
     local icon_highlight = (item.type == "directory") and "FylerFSDirectoryIcon" or hl
     -- Use the cached highlight from the last Pass 2 if available; this ensures
     -- ignored/modified/staged files and directories are already styled in Pass 1
@@ -571,18 +582,18 @@ M.files = Component.new_async(function(node, onupdate)
       or ((item.type == "directory") and "FylerFSDirectoryName" or nil)
     icon = icon and (icon .. "  ") or ""
 
-    -- Display order: <icon> <name> <git> <perms> | <size> | <date>
-    -- (ref_id concealed; git pre-filled from cache when available).
-    table.insert(files_column, build_entry_row(item, depth, icon, icon_highlight, name_highlight))
+    -- Display order: <icon> <name> <perms> | <size> | <date>
+    -- (ref_id concealed; stats come from the per-render cache).
+    table.insert(files_column, build_entry_row(item, depth, icon, icon_highlight, name_highlight, stat_cache))
   end
 
   -- First pass: render the file tree immediately so the buffer is populated
   -- without waiting for async detail columns (git status, symlink targets, …).
   onupdate({ tag = "files", children = { Row({ Column(files_column) }) } })
 
-  -- Second pass: fire detail columns in parallel. Git patches the real-text
-  -- slot and rewrites buffer lines; other columns overlay virtual-text
-  -- decorations (in the same full render when git changed, partial otherwise).
+  -- Second pass: fire detail columns in parallel. All columns (including
+  -- git) overlay virtual-text decorations in a single partial render:
+  -- buffer lines are never rewritten here.
   collect_and_render_details(
     current_tag,
     create_column_context(current_tag, node, flattened_entries, files_column),
@@ -592,16 +603,16 @@ M.files = Component.new_async(function(node, onupdate)
 end)
 
 -- Refresh only the detail columns (git, diagnostic, etc.) for the current node.
--- When git status changed, buffer lines are rewritten (the git slot is real
--- text); otherwise only extmarks are refreshed. This keeps the flicker-free
--- path for non-git updates while git changes remain visible.
+-- Buffer lines are never rewritten here: git status rides as virtual text,
+-- so this path only refreshes extmarks.
 M.refresh_details = function(node, onupdate)
   M.tag = M.tag + 1
   local current_tag = M.tag
 
   if not node or not node.children then return end
 
-  local flattened_entries = flatten_tree(node)
+  local stat_cache = new_stat_cache()
+  local flattened_entries = flatten_tree(node, nil, nil, nil, stat_cache)
   if #flattened_entries == 0 then return end
 
   -- Rebuild files_column so highlights can be mutated by on_column_complete
@@ -609,18 +620,18 @@ M.refresh_details = function(node, onupdate)
 
   for _, entry in ipairs(flattened_entries) do
     local item, depth = entry.item, entry.depth
-    local icon, hl, is_exec = icon_and_hl(item)
+    local icon, hl, is_exec = icon_and_hl(item, stat_cache)
+    entry.is_exec = is_exec
     local icon_highlight = (item.type == "directory") and "FylerFSDirectoryIcon" or hl
-    -- NOTE: no highlight_cache/git_cache read here on purpose — the caches are
-    -- cleared and rewritten below, so reading them would re-apply stale data.
+    -- NOTE: no highlight_cache read here on purpose — the cache is cleared
+    -- and rewritten below, so reading it would re-apply stale data.
     local name_highlight = ((item.type == "directory") and "FylerFSDirectoryName" or nil)
       or (is_exec and "FylerExecutable" or nil)
     icon = icon and (icon .. "  ") or ""
 
-    -- Display order: <icon> <name> <git> <perms> | <size> | <date>
-    -- (ref_id concealed). Git renders as a blank placeholder here; the real
-    -- symbol arrives via collect_and_render_details.
-    table.insert(files_column, build_entry_row(item, depth, icon, icon_highlight, name_highlight, false))
+    -- Display order: <icon> <name> <perms> | <size> | <date>
+    -- (ref_id concealed; stats come from the per-render cache).
+    table.insert(files_column, build_entry_row(item, depth, icon, icon_highlight, name_highlight, stat_cache))
   end
 
   collect_and_render_details(
