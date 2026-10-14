@@ -82,7 +82,7 @@ T["Each WinKind Can"]["Do Create Actions"] = function(kind)
   local path = make_tree({})
   nvim.forward_lua("require('fyler').open")({ dir = path, kind = kind })
   vim.uv.sleep(20)
-  nvim.set_lines(0, 2, 2, false, { "new-file", "new-dir/" })
+  nvim.set_lines(0, 1, 1, false, { "new-file", "new-dir/" })
   nvim.cmd("write")
   nvim.type_keys("y")
   vim.uv.sleep(20)
@@ -126,11 +126,11 @@ T["Each WinKind Can"]["Do Copy Actions"] = function(kind)
     if vim.endswith(line, "/") then return line:sub(1, -2) .. suffix .. "/" end
     return line .. suffix
   end
-  -- Duplicate entry lines only: copying the header or "../" rows would
-  -- create junk entries (they carry no ref_id).
+  -- Duplicate entry lines only: copying the header row would
+  -- create junk entries (it carries no ref_id).
   local copies = {}
   for i, line in ipairs(nvim.get_lines(0, 0, -1, false)) do
-    if i > 2 then table.insert(copies, add_suffix(line, "-copied")) end
+    if i > 1 then table.insert(copies, add_suffix(line, "-copied")) end
   end
   -- stylua: ignore
   nvim.set_lines(0, -1, -1, false, copies)
@@ -156,7 +156,7 @@ T["Each WinKind Can"]["Cancel Mutation Restores Buffer"] = function(kind)
   local orig_lines = nvim.get_lines(0, 0, -1, false)
   local copies = {}
   for i, line in ipairs(orig_lines) do
-    if i > 2 then table.insert(copies, line .. "-pasted") end
+    if i > 1 then table.insert(copies, line .. "-pasted") end
   end
   nvim.set_lines(0, -1, -1, false, copies)
   nvim.cmd("write")

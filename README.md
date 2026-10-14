@@ -32,9 +32,8 @@ This fork ([jugarpeupv/fyler.nvim](https://github.com/jugarpeupv/fyler.nvim)) bu
   string inline and `:w` to chmod; invalid values warn and restore.
 - **Inline size column rendered as real text** — file sizes render as real buffer text (`11349B`) with
   their own `FylerSize` highlight group. Edits to it are ignored and restored.
-- **Editable cwd header with `../` navigation** — the first line shows the
-  current directory as real text (edit it and press `<CR>` to jump there),
-  and pressing `<CR>` on the `../` second line goes to the parent directory.
+- **Editable cwd header** — the first line shows the
+  current directory as real text (edit it and press `<CR>` to jump there).
 - **`ToggleDetails` action** — show/hide the permissions and size text together.
 - **`SelectIfDirectory` action** — runs `Select` on directories, falls through to
   the builtin motion on files.

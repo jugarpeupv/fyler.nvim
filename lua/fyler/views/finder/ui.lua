@@ -434,9 +434,8 @@ local function collect_and_render_details(tag, context, files_column, oncollect)
       end
 
       for index, highlight in pairs(all_highlights) do
-        -- +1 because files_column[1] is the "../" navigation row; real entries start at index 2.
         -- children: 1 indent, 2 icon, 3 ref_id, 4 name, 5 git, 6 perms, 7 size, 8 date.
-        local row = files_column[index + 1]
+        local row = files_column[index]
         if row and row.children then
           local name_component = row.children[4]
           if name_component then
@@ -474,8 +473,7 @@ local function collect_and_render_details(tag, context, files_column, oncollect)
       local git_patched = false
       if git_result and git_result.symbols then
         for index, sym in pairs(git_result.symbols) do
-          -- +1 because files_column[1] is the "../" navigation row.
-          local row = files_column[index + 1]
+          local row = files_column[index]
           if row and row.children then
             local git_component = row.children[5]
             if git_component then
@@ -516,10 +514,6 @@ local function collect_and_render_details(tag, context, files_column, oncollect)
             end
           end
 
-          -- Prepend a blank row to align with the "../" navigation line in files_column.
-          local blank = Text(nil, { virt_text = { { "" } } })
-          table.insert(result.column, 1, blank)
-
           table.insert(detail_columns, Column(result.column))
         end
         ::continue_column::
@@ -555,21 +549,6 @@ M.files = Component.new_async(function(node, onupdate)
   if not node or not node.children then return onupdate({ tag = "files", children = {} }) end
 
   local files_column = {}
-  -- Always prepend the parent-directory navigation entry. This line is purely
-  -- decorative/navigational and carries no ref_id so the resolver ignores it.
-  do
-    local parent_icon, _ = config.icon_provider("directory", "..")
-    local icons = config.values.views.finder.icon
-    parent_icon = icons.directory_collapsed or parent_icon or ""
-    local parent_icon_str = (parent_icon ~= "") and (parent_icon .. "  ") or ""
-    table.insert(
-      files_column,
-      Row({
-        Text(parent_icon_str, { highlight = "FylerFSDirectoryIcon" }),
-        Text("../", { highlight = "FylerFSDirectoryName" }),
-      })
-    )
-  end
 
   local flattened_entries = flatten_tree(node)
   if #flattened_entries == 0 then return onupdate({ tag = "files", children = { Row({ Column(files_column) }) } }) end
@@ -627,20 +606,6 @@ M.refresh_details = function(node, onupdate)
 
   -- Rebuild files_column so highlights can be mutated by on_column_complete
   local files_column = {}
-  -- Prepend the parent-directory entry to keep indices aligned with Pass 1.
-  do
-    local parent_icon, _ = config.icon_provider("directory", "..")
-    local icons = config.values.views.finder.icon
-    parent_icon = icons.directory_collapsed or parent_icon or ""
-    local parent_icon_str = (parent_icon ~= "") and (parent_icon .. "  ") or ""
-    table.insert(
-      files_column,
-      Row({
-        Text(parent_icon_str, { highlight = "FylerFSDirectoryIcon" }),
-        Text("../", { highlight = "FylerFSDirectoryName" }),
-      })
-    )
-  end
 
   for _, entry in ipairs(flattened_entries) do
     local item, depth = entry.item, entry.depth

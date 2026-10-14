@@ -242,7 +242,7 @@ function Finder:open(kind)
       -- Smart `o`: on an OPEN directory entry line, open the new line right
       -- below it at child indent (just above the first child) and start
       -- typing there. The indent level is what parents a new entry on save.
-      -- Closed directories, "../", the header and files keep builtin `o`
+      -- Closed directories, the header and files keep builtin `o`
       -- (autoindent already yields the sibling indent).
       -- Anywhere else, or with a count, falls back to builtin `o`.
       -- Skipped when the user mapped `o` themselves.

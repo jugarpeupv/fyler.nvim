@@ -19,14 +19,6 @@ end
 local function _select(self, opener, opts)
   opts = vim.tbl_extend("force", { winpick = true, keep_open = false }, opts or {})
 
-  -- Line 2 (vim line number) is always the "../" parent-directory navigation entry.
-  -- Pressing <CR> on it navigates up one directory, matching netrw behaviour.
-  if vim.fn.line(".") == 2 then
-    local parent_dir = Path.new(self:getcwd()):parent():posix_path()
-    if parent_dir ~= self:getcwd() then self:change_root(parent_dir):dispatch_refresh({ force_update = true }) end
-    return
-  end
-
   local ref_id = helper.parse_ref_id(vim.api.nvim_get_current_line())
   if not ref_id then return end
 
@@ -144,7 +136,7 @@ local function _select(self, opener, opts)
 end
 
 ---Select only when the cursorline is a directory (expand/collapse/enter).
----On files (or the "../" row) fall through to builtin `L`
+---On files fall through to builtin `L`
 ---(cursor to the bottom of the window).
 function M.n_select_if_directory(self)
   return function()
@@ -554,7 +546,7 @@ local function preview_update(self)
   end
   local entry = self:cursor_node_entry()
   if not entry then
-    -- Header/"../" row: show the current directory listing.
+    -- Header row: show the current directory listing.
     preview_show_dir(pv, self:getcwd())
     return
   end
@@ -824,9 +816,9 @@ local function v_collect(self, action)
   local first = math.min(cur, anch)
   local last = math.max(cur, anch)
 
-  -- Lines 1 (cwd header) and 2 ("../") are not file entries. If the selection
-  -- touches either of them, fall back to a plain yank and do nothing fyler-specific.
-  if first <= 2 then
+  -- Line 1 (cwd header) is not a file entry. If the selection
+  -- touches it, fall back to a plain yank and do nothing fyler-specific.
+  if first <= 1 then
     -- Let Neovim handle the yank natively: feed <Esc> to finalise the visual
     -- selection marks ('<,'>), then gvy to reselect and yank into unnamed register.
     local keys = vim.api.nvim_replace_termcodes("<Esc>gvy", true, false, true)
