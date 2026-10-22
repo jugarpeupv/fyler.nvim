@@ -69,15 +69,12 @@ T["highlight_cache for gitignored directories"] = function()
   local ignored_name = ignored_row.children[4]
   equal(ignored_name.value, "ignored-folder/")
   equal(ignored_name.option.highlight, "FylerFSIgnored")
-  -- The folder icon (here: expanded) inherits the ignored highlight too.
-  equal(ignored_row.children[2].option.highlight, "FylerFSDirectoryIgnored")
 
   -- files_column[2] is "child-folder/" (sorted directories first)
   local child_dir_row = files_column[2]
   local child_dir_name = child_dir_row.children[4]
   equal(child_dir_name.value, "child-folder/")
   equal(child_dir_name.option.highlight, "FylerFSIgnored")
-  equal(child_dir_row.children[2].option.highlight, "FylerFSDirectoryIgnored")
 
   -- files_column[3] is "child-file"
   local child_file_row = files_column[3]
@@ -90,7 +87,6 @@ T["highlight_cache for gitignored directories"] = function()
   local normal_name = normal_row.children[4]
   equal(normal_name.value, "normal-folder/")
   equal(normal_name.option.highlight, "FylerFSDirectoryName")
-  equal(normal_row.children[2].option.highlight, "FylerFSDirectoryIcon")
 
   -- Cleanup
   ui.highlight_cache[10] = nil
@@ -133,8 +129,6 @@ T["highlight_cache for collapsed gitignored directory"] = function()
   local ignored_name = ignored_row.children[4]
   equal(ignored_name.value, "ignored-folder/")
   equal(ignored_name.option.highlight, "FylerFSIgnored")
-  -- The folder icon (here: collapsed) inherits the ignored highlight too.
-  equal(ignored_row.children[2].option.highlight, "FylerFSDirectoryIgnored")
 
   ui.highlight_cache[10] = nil
 end

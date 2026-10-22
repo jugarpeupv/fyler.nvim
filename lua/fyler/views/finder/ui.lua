@@ -483,26 +483,16 @@ local function collect_and_render_details(tag, context, files_column, oncollect)
         -- children: 1 indent, 2 icon, 3 ref_id, 4 name, 5 perms, 6 size, 7 date.
         local row = files_column[index]
         if row and row.children then
-          local entry = context.entries[index]
-
           local name_component = row.children[4]
           if name_component then
             -- Executable styling wins: never overwrite an executable file's
             -- name with a detail (git) highlight. is_exec was computed (and
             -- its stat cached) in Pass 1, so this costs no extra syscall.
+            local entry = context.entries[index]
             if entry and not entry.is_exec then
               name_component.option = name_component.option or {}
               name_component.option.highlight = highlight
             end
-          end
-
-          -- Gitignored directories also grey out the folder icon (open or
-          -- closed), matching the name highlight.
-          local icon_component = row.children[2]
-          if icon_component and entry and entry.item.type == "directory" then
-            icon_component.option = icon_component.option or {}
-            icon_component.option.highlight = highlight == "FylerFSIgnored" and "FylerFSDirectoryIgnored"
-              or "FylerFSDirectoryIcon"
           end
         end
       end
@@ -577,6 +567,7 @@ M.files = Component.new_async(function(node, onupdate)
     local icon, hl, is_exec = icon_and_hl(item, stat_cache)
     -- Stash for Pass 2 (highlight patching) so it never re-stats.
     entry.is_exec = is_exec
+    local icon_highlight = (item.type == "directory") and "FylerFSDirectoryIcon" or hl
     -- Use the cached highlight from the last Pass 2 if available; this ensures
     -- ignored/modified/staged files and directories are already styled in Pass 1
     -- so they never flash as unstyled text or reset to default directory highlight
@@ -586,13 +577,6 @@ M.files = Component.new_async(function(node, onupdate)
     -- Executable styling wins over git status for names when both apply.
     local cached_hl = (item.ref_id and M.highlight_cache[item.ref_id])
       or (entry.ignored and ((item.type == "directory") and "FylerFSIgnored" or "FylerGitIgnored") or nil)
-    local is_ignored = cached_hl == "FylerFSIgnored" or cached_hl == "FylerGitIgnored"
-    local icon_highlight
-    if item.type == "directory" then
-      icon_highlight = is_ignored and "FylerFSDirectoryIgnored" or "FylerFSDirectoryIcon"
-    else
-      icon_highlight = hl
-    end
     local name_highlight = (is_exec and "FylerExecutable" or nil)
       or cached_hl
       or ((item.type == "directory") and "FylerFSDirectoryName" or nil)
