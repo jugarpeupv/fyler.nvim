@@ -485,11 +485,13 @@ local function collect_and_render_details(tag, context, files_column, oncollect)
         if row and row.children then
           local name_component = row.children[4]
           if name_component then
-            -- Executable styling wins: never overwrite an executable file's
-            -- name with a detail (git) highlight. is_exec was computed (and
-            -- its stat cached) in Pass 1, so this costs no extra syscall.
+            -- Executable styling normally wins: never overwrite an executable
+            -- file's name with a detail (git) highlight. The one exception is
+            -- gitignored files: the ignored grey must win over executable
+            -- styling. is_exec was computed (and its stat cached) in Pass 1,
+            -- so this costs no extra syscall.
             local entry = context.entries[index]
-            if entry and not entry.is_exec then
+            if entry and (not entry.is_exec or highlight == "FylerGitIgnored") then
               name_component.option = name_component.option or {}
               name_component.option.highlight = highlight
             end
@@ -574,12 +576,18 @@ M.files = Component.new_async(function(node, onupdate)
     -- before the async git column arrives.
     -- If an entry has no direct cache entry but inherits ignored status from
     -- an ancestor, pre-apply the ignored highlight immediately.
-    -- Executable styling wins over git status for names when both apply.
+    -- Executable styling wins over git status for names when both apply,
+    -- except for gitignored files: the ignored highlight takes precedence.
     local cached_hl = (item.ref_id and M.highlight_cache[item.ref_id])
       or (entry.ignored and ((item.type == "directory") and "FylerFSIgnored" or "FylerGitIgnored") or nil)
-    local name_highlight = (is_exec and "FylerExecutable" or nil)
-      or cached_hl
-      or ((item.type == "directory") and "FylerFSDirectoryName" or nil)
+    local name_highlight
+    if cached_hl == "FylerGitIgnored" or cached_hl == "FylerFSIgnored" then
+      name_highlight = cached_hl
+    else
+      name_highlight = (is_exec and "FylerExecutable" or nil)
+        or cached_hl
+        or ((item.type == "directory") and "FylerFSDirectoryName" or nil)
+    end
     icon = icon and (icon .. "  ") or ""
 
     -- Display order: <icon> <name> <perms> | <size> | <date>

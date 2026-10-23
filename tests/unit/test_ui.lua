@@ -133,4 +133,50 @@ T["highlight_cache for collapsed gitignored directory"] = function()
   ui.highlight_cache[10] = nil
 end
 
+T["gitignored highlight wins over executable styling"] = function()
+  config.setup({
+    views = {
+      finder = {
+        columns = {
+          git = { enabled = true },
+        },
+      },
+    },
+  })
+
+  local path = vim.fn.tempname()
+  vim.fn.writefile({ "#!/bin/sh" }, path)
+  vim.uv.fs_chmod(path, tonumber("755", 8))
+
+  ui.highlight_cache[30] = "FylerGitIgnored"
+
+  local tree_node = {
+    path = vim.fn.fnamemodify(path, ":h"),
+    children = {
+      {
+        name = vim.fn.fnamemodify(path, ":t"),
+        type = "file",
+        path = path,
+        ref_id = 30,
+      },
+    },
+  }
+
+  local first_pass_result = nil
+  ui.files(tree_node, function(comp)
+    if not first_pass_result then first_pass_result = comp end
+  end)
+
+  local files_column = first_pass_result.children[1].children[1].children
+  local row = files_column[1]
+
+  -- The ignored grey wins over the executable highlight for the name.
+  equal(row.children[4].option.highlight, "FylerGitIgnored")
+  -- The icon keeps its executable styling.
+  equal(row.children[2].option.highlight, "FylerExecutable")
+
+  ui.highlight_cache[30] = nil
+  vim.uv.fs_unlink(path)
+end
+
 return T
