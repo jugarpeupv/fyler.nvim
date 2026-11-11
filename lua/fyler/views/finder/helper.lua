@@ -176,6 +176,24 @@ function M.parse_is_directory(str)
   return name:sub(-1) == "/"
 end
 
+---Relocate text typed before an entry's technical prefix (indentation + icon
+---+ concealed ref_id) into the filename. Multi-cursor plugins insert at raw
+---buffer columns, so a cursor at column 0 writes before the icon and never
+---reaches the name; the CursorMoved snap only rescues the real cursor.
+---Rendered lines look like: <indent><icon>  /NNNNN <name>[  perms]...
+---@param line string
+---@param prefix string|nil expected rendered prefix, e.g. " 󰛦  /00042 "
+---@return string|nil normalized line, or nil when there is nothing to move
+---@return string|nil the text that was moved after the prefix
+function M.normalize_prefix(line, prefix)
+  if not prefix or prefix == "" then return nil end
+  if line:sub(1, #prefix) == prefix then return nil end
+  local pos = line:find(prefix, 1, true)
+  if not pos or pos == 1 then return nil end
+  local inserted = line:sub(1, pos - 1)
+  return prefix .. inserted .. line:sub(pos + #prefix), inserted
+end
+
 ---@param str string
 ---@return string
 function M.parse_name(str)

@@ -23,6 +23,93 @@ local function update_global_cwd(path)
   global_cwd = vim.fn.fnamemodify(p, ":p"):gsub("/$", "")
 end
 
+---Move text typed before an entry's technical prefix (icon + concealed
+---ref_id) into the filename. Multi-cursor plugins insert at raw buffer
+---columns, so a cursor at column 0 writes before the icon and never reaches
+---the name; the CursorMoved snap only rescues the real cursor. Also repairs
+---the name highlight, whose extmark shifts right with the inserted text.
+---@param win Win
+local function normalize_entry_prefixes(win)
+  if not win:has_valid_bufnr() then return end
+  local bufnr = win.bufnr
+  local ui = require("fyler.views.finder.ui")
+  local updates = {}
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  -- Skip line 1: it is the editable path header, not an entry.
+  for i = 2, #lines do
+    local line = lines[i]
+    local ref_id = helper.parse_ref_id(line)
+    if ref_id then
+      local prefix = ui.get_prefix(ref_id)
+      local normalized, inserted = helper.normalize_prefix(line, prefix)
+      if normalized then
+        updates[#updates + 1] = {
+          row = i - 1,
+          prefix_len = #prefix,
+          inserted = inserted,
+        }
+      end
+    end
+  end
+
+  for _, update in ipairs(updates) do
+    -- Keep every step in the same undo block as the edit that caused it.
+    pcall(function() vim.cmd("undojoin") end)
+    -- Move the text with two minimal edits instead of replacing the whole
+    -- line: full-line rewrites scramble the highlight extmarks.
+    vim.api.nvim_buf_set_text(bufnr, update.row, 0, update.row, #update.inserted, {})
+    pcall(function() vim.cmd("undojoin") end)
+    vim.api.nvim_buf_set_text(bufnr, update.row, update.prefix_len, update.row, update.prefix_len, { update.inserted })
+  end
+
+  -- Insertions at the filename start shift the name-highlight extmark right,
+  -- leaving the new text unstyled. Extend every name highlight back to the
+  -- start of the name (this also covers the relocated text above).
+  local ns = win.namespace
+  if not ns then return end
+
+  lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  local marks_by_row = {}
+  for _, mark in ipairs(vim.api.nvim_buf_get_extmarks(bufnr, ns, 0, -1, { details = true })) do
+    local row = mark[2]
+    marks_by_row[row] = marks_by_row[row] or {}
+    table.insert(marks_by_row[row], mark)
+  end
+
+  for i = 2, #lines do
+    local line = lines[i]
+    local ref_id = helper.parse_ref_id(line)
+    local prefix = ref_id and ui.get_prefix(ref_id)
+    if prefix and line:sub(1, #prefix) == prefix then
+      local ok, name = pcall(helper.parse_entry, line)
+      if ok and name then
+        local name_start = #prefix
+        local name_end = name_start + #name
+        for _, mark in ipairs(marks_by_row[i - 1] or {}) do
+          local details = mark[4] or {}
+          local col = mark[3]
+          if
+            details.hl_group ~= nil
+            and details.end_col ~= nil
+            and details.end_col > col
+            and col >= name_start
+            and col < name_end
+            and col > name_start
+          then
+            vim.api.nvim_buf_set_extmark(bufnr, ns, i - 1, name_start, {
+              id = mark[1],
+              end_col = details.end_col,
+              hl_group = details.hl_group,
+              priority = details.priority,
+              conceal = details.conceal,
+            })
+          end
+        end
+      end
+    end
+  end
+end
+
 ---@class Finder
 ---@field uri string
 ---@field files Files
@@ -274,6 +361,30 @@ function Finder:open(kind)
             vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<Right>", true, false, true), "n", false)
           end, mopts)
         end
+      end
+
+      -- Multi-cursor plugins (multicursor.nvim, Neovim's built-in
+      -- multicursor) insert at raw buffer columns. A cursor at column 0
+      -- writes before the icon and the concealed ref_id, so the typed text
+      -- never becomes part of the filename; the CursorMoved snap above only
+      -- rescues the real cursor. After each edit, move such stray prefix text
+      -- into the filename.
+      do
+        local pending = false
+        vim.api.nvim_create_autocmd({ "InsertLeave", "TextChanged" }, {
+          group = vim.api.nvim_create_augroup("FylerEntryPrefix" .. bufnr, { clear = true }),
+          buffer = bufnr,
+          callback = function()
+            if pending then return end
+            pending = true
+            -- Let multicursor plugins finish their own post-insert handling
+            -- before we rewrite the lines.
+            vim.schedule(function()
+              pending = false
+              if self.win:has_valid_bufnr() then normalize_entry_prefixes(self.win) end
+            end)
+          end,
+        })
       end
 
       -- Visual-mode actions: registered as "x" so they capture the line range
@@ -537,6 +648,10 @@ local function should_mutate(operations, cwd)
 end
 
 function Finder:dispatch_mutation()
+  -- Safety net: make column-0 multi-cursor edits part of the filename even if
+  -- their insert session did not reach the InsertLeave handler.
+  if self.win and self.win:has_valid_bufnr() then normalize_entry_prefixes(self.win) end
+
   async.void(function()
     local ok, result = pcall(function() return self.files:diff_with_buffer() end)
 

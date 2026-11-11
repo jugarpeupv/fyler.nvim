@@ -363,4 +363,20 @@ T["git virt-text"]["parse_name ignores the git flag when perm column is off"] = 
   config.values = saved
 end
 
+T["normalize_prefix moves column-0 text into the filename"] = function()
+  local prefix = "  icon  /00042 "
+  local line, inserted = helper_mod.normalize_prefix("folder/" .. prefix .. "a.txt  .rw-r--r--", prefix)
+  equal(line, prefix .. "folder/a.txt  .rw-r--r--")
+  equal(inserted, "folder/")
+end
+
+T["normalize_prefix leaves already-normalized lines alone"] = function()
+  local prefix = "  icon  /00042 "
+  equal(helper_mod.normalize_prefix(prefix .. "folder/a.txt", prefix), nil)
+end
+
+T["normalize_prefix ignores lines without a prefix"] = function()
+  equal(helper_mod.normalize_prefix("folder/  icon  /00042 a.txt", nil), nil)
+end
+
 return T

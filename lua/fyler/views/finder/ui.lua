@@ -21,6 +21,11 @@ local M = {}
 -- removes staged status) don't linger.
 M.highlight_cache = {}
 
+-- Cache of ref_id -> rendered line prefix (indentation + icon + "/NNNNN "),
+-- populated in Pass 1. Used by the finder to relocate multi-cursor
+-- insertions typed at column 0 (before the icon) into the filename.
+M.prefix_cache = {}
+
 -- Per-render stat cache: at most one lstat + one stat per path per
 -- refresh. Pass 1 stats each visible entry up to 4 times (permissions,
 -- size, date, executable bit); without the cache a 500-entry directory
@@ -317,6 +322,7 @@ end
 M.tag = 0
 M.get_sort_order = function() return sort_order end
 M.set_sort_order = function(v) sort_order = v end
+M.get_prefix = function(ref_id) return ref_id and M.prefix_cache[ref_id] or nil end
 M.get_permissions = get_permissions
 M.perms_to_mode = perms_to_mode
 
@@ -363,6 +369,7 @@ local function build_entry_row(item, depth, icon, icon_highlight, name_highlight
     local date_str = format_date(stat_path, cache)
     if date_str ~= "" then date_text = Text(sep .. date_str, { highlight = "FylerPermissions" }) end
   end
+  if item.ref_id then M.prefix_cache[item.ref_id] = indentation_text.value .. (icon or "") .. ref_id_text.value end
   return Row({ indentation_text, icon_text, ref_id_text, name_text, perm_text, size_text, date_text })
 end
 
