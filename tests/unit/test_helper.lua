@@ -364,10 +364,27 @@ T["git virt-text"]["parse_name ignores the git flag when perm column is off"] = 
 end
 
 T["normalize_prefix moves column-0 text into the filename"] = function()
-  local prefix = "  icon  /00042 "
-  local line, inserted = helper_mod.normalize_prefix("folder/" .. prefix .. "a.txt  .rw-r--r--", prefix)
+  local prefix = "icon  /00042 "
+  local line, inserted, insert_col = helper_mod.normalize_prefix("folder/" .. prefix .. "a.txt  .rw-r--r--", prefix)
   equal(line, prefix .. "folder/a.txt  .rw-r--r--")
   equal(inserted, "folder/")
+  equal(insert_col, #prefix)
+end
+
+T["normalize_prefix ignores re-indentation"] = function()
+  local prefix = "icon  /00042 "
+  -- `>` adds leading whitespace before the icon: keep it as indentation.
+  equal(helper_mod.normalize_prefix("  " .. prefix .. "a.txt", prefix), nil)
+  -- `<` removes indentation: nothing to move either.
+  equal(helper_mod.normalize_prefix(prefix .. "a.txt", prefix), nil)
+end
+
+T["normalize_prefix preserves indentation when relocating"] = function()
+  local prefix = "icon  /00042 "
+  local line, inserted, insert_col = helper_mod.normalize_prefix("folder/  " .. prefix .. "a.txt", prefix)
+  equal(line, "  " .. prefix .. "folder/a.txt")
+  equal(inserted, "folder/")
+  equal(insert_col, 2 + #prefix)
 end
 
 T["normalize_prefix leaves already-normalized lines alone"] = function()

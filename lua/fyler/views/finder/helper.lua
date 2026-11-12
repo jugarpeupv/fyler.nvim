@@ -176,22 +176,29 @@ function M.parse_is_directory(str)
   return name:sub(-1) == "/"
 end
 
----Relocate text typed before an entry's technical prefix (indentation + icon
----+ concealed ref_id) into the filename. Multi-cursor plugins insert at raw
----buffer columns, so a cursor at column 0 writes before the icon and never
----reaches the name; the CursorMoved snap only rescues the real cursor.
+---Relocate text typed before an entry's technical prefix (icon + concealed
+---ref_id) into the filename. Multi-cursor plugins insert at raw buffer
+---columns, so a cursor at column 0 writes before the icon and never reaches
+---the name; the CursorMoved snap only rescues the real cursor.
+---`prefix` is the technical prefix only (no leading indentation), so `>`/`<`
+---re-indentation is not mistaken for inserted text.
 ---Rendered lines look like: <indent><icon>  /NNNNN <name>[  perms]...
 ---@param line string
----@param prefix string|nil expected rendered prefix, e.g. " 󰛦  /00042 "
+---@param prefix string|nil technical prefix, e.g. "󰛦  /00042 "
 ---@return string|nil normalized line, or nil when there is nothing to move
 ---@return string|nil the text that was moved after the prefix
+---@return integer|nil 0-indexed column (after deletion) to insert the text at
 function M.normalize_prefix(line, prefix)
   if not prefix or prefix == "" then return nil end
-  if line:sub(1, #prefix) == prefix then return nil end
   local pos = line:find(prefix, 1, true)
   if not pos or pos == 1 then return nil end
-  local inserted = line:sub(1, pos - 1)
-  return prefix .. inserted .. line:sub(pos + #prefix), inserted
+  local before = line:sub(1, pos - 1)
+  -- Keep trailing indentation where it is; only text before it was inserted.
+  local indent = before:match("(%s*)$") or ""
+  local inserted = before:sub(1, #before - #indent)
+  if inserted == "" then return nil end
+  local rest = line:sub(pos + #prefix)
+  return indent .. prefix .. inserted .. rest, inserted, #indent + #prefix
 end
 
 ---@param str string

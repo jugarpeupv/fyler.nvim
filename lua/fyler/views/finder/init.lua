@@ -41,12 +41,12 @@ local function normalize_entry_prefixes(win)
     local ref_id = helper.parse_ref_id(line)
     if ref_id then
       local prefix = ui.get_prefix(ref_id)
-      local normalized, inserted = helper.normalize_prefix(line, prefix)
+      local normalized, inserted, insert_col = helper.normalize_prefix(line, prefix)
       if normalized then
         updates[#updates + 1] = {
           row = i - 1,
-          prefix_len = #prefix,
           inserted = inserted,
+          insert_col = insert_col,
         }
       end
     end
@@ -59,7 +59,7 @@ local function normalize_entry_prefixes(win)
     -- line: full-line rewrites scramble the highlight extmarks.
     vim.api.nvim_buf_set_text(bufnr, update.row, 0, update.row, #update.inserted, {})
     pcall(function() vim.cmd("undojoin") end)
-    vim.api.nvim_buf_set_text(bufnr, update.row, update.prefix_len, update.row, update.prefix_len, { update.inserted })
+    vim.api.nvim_buf_set_text(bufnr, update.row, update.insert_col, update.row, update.insert_col, { update.inserted })
   end
 
   -- Insertions at the filename start shift the name-highlight extmark right,
@@ -80,10 +80,11 @@ local function normalize_entry_prefixes(win)
     local line = lines[i]
     local ref_id = helper.parse_ref_id(line)
     local prefix = ref_id and ui.get_prefix(ref_id)
-    if prefix and line:sub(1, #prefix) == prefix then
+    local pos = prefix and line:find(prefix, 1, true) or nil
+    if pos then
       local ok, name = pcall(helper.parse_entry, line)
       if ok and name then
-        local name_start = #prefix
+        local name_start = pos - 1 + #prefix
         local name_end = name_start + #name
         for _, mark in ipairs(marks_by_row[i - 1] or {}) do
           local details = mark[4] or {}

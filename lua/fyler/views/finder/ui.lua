@@ -21,9 +21,10 @@ local M = {}
 -- removes staged status) don't linger.
 M.highlight_cache = {}
 
--- Cache of ref_id -> rendered line prefix (indentation + icon + "/NNNNN "),
--- populated in Pass 1. Used by the finder to relocate multi-cursor
--- insertions typed at column 0 (before the icon) into the filename.
+-- Cache of ref_id -> rendered technical prefix (icon + "/NNNNN "), without
+-- the leading indentation. Used by the finder to relocate multi-cursor
+-- insertions typed at column 0 (before the icon) into the filename. Keeping
+-- indentation out of the cached prefix means `>`/`<` re-indents stay valid.
 M.prefix_cache = {}
 
 -- Per-render stat cache: at most one lstat + one stat per path per
@@ -369,7 +370,7 @@ local function build_entry_row(item, depth, icon, icon_highlight, name_highlight
     local date_str = format_date(stat_path, cache)
     if date_str ~= "" then date_text = Text(sep .. date_str, { highlight = "FylerPermissions" }) end
   end
-  if item.ref_id then M.prefix_cache[item.ref_id] = indentation_text.value .. (icon or "") .. ref_id_text.value end
+  if item.ref_id then M.prefix_cache[item.ref_id] = (icon or "") .. ref_id_text.value end
   return Row({ indentation_text, icon_text, ref_id_text, name_text, perm_text, size_text, date_text })
 end
 

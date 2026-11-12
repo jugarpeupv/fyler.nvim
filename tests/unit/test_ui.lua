@@ -70,8 +70,8 @@ T["highlight_cache for gitignored directories"] = function()
   equal(ignored_name.value, "ignored-folder/")
   equal(ignored_name.option.highlight, "FylerFSIgnored")
 
-  -- Pass 1 caches the rendered prefix so column-0 edits can be relocated
-  -- into the filename after a multi-cursor edit.
+  -- Pass 1 caches the technical prefix (icon + ref_id) so column-0 edits can
+  -- be relocated into the filename after a multi-cursor edit.
   equal(ui.get_prefix(10):find("/00010 ", 1, true) ~= nil, true)
 
   -- files_column[2] is "child-folder/" (sorted directories first)
