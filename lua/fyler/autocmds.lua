@@ -25,7 +25,15 @@ function M.setup(config)
       desc = "Hijack directory buffers for fyler",
       callback = function(args)
         local bufname = vim.api.nvim_buf_get_name(args.buf)
-        if Path.new(bufname):is_directory() or helper.is_protocol_uri(bufname) then
+        if helper.is_protocol_uri(bufname) then
+          -- A fyler:// buffer, either a session placeholder or a manual
+          -- `:e fyler://...`: rebuild the view in the window showing it instead
+          -- of deleting the buffer and opening a fresh split.
+          require("fyler.session").restore_buffer(args.buf)
+          return
+        end
+
+        if Path.new(bufname):is_directory() then
           vim.schedule(function()
             if util.get_buf_option(args.buf, "filetype") == "fyler" then return end
 
@@ -36,21 +44,51 @@ function M.setup(config)
         end
       end,
     })
-
-    vim.api.nvim_create_autocmd({ "BufReadCmd", "SessionLoadPost" }, {
-      group = augroup,
-      pattern = "fyler://*",
-      desc = "Open fyler protocol URIs",
-      callback = function(args)
-        local bufname = vim.api.nvim_buf_get_name(args.buf)
-        if helper.is_protocol_uri(bufname) then
-          local _, slot = helper.parse_protocol_uri(bufname)
-          local finder_instance = require("fyler.views.finder").instance(slot)
-          if not finder_instance:isopen() then vim.schedule_wrap(fyler.open)({ dir = bufname }) end
-        end
-      end,
-    })
   end
+
+  -- Restore fyler views after a session is loaded. Neovim ends every session
+  -- file with `doautoall SessionLoadPost`, so this runs once per buffer with
+  -- the buffer name as the pattern. :mksession writes fyler buffers (which use
+  -- `buftype=acwrite`) as empty `enew | file fyler://...` placeholders.
+  vim.api.nvim_create_autocmd("SessionLoadPost", {
+    group = augroup,
+    pattern = "fyler://*",
+    desc = "Restore fyler views after loading a session",
+    callback = function(args) require("fyler.session").restore_buffer(args.buf) end,
+  })
+
+  -- :mksession loses the cursor of fyler buffers (special buffers have no
+  -- stored cursor), so append it to the session file for SessionLoadPost.
+  vim.api.nvim_create_autocmd("SessionWritePost", {
+    group = augroup,
+    desc = "Save fyler cursor positions in the session file",
+    callback = function() require("fyler.session").save_cursors() end,
+  })
+
+  -- persistence.nvim saves from VimLeavePre, where Neovim suppresses built-in
+  -- autocmds such as SessionWritePost, but User events still fire.
+  vim.api.nvim_create_autocmd("User", {
+    group = augroup,
+    pattern = "PersistenceSavePost",
+    desc = "Save fyler cursor positions after persistence.nvim saves",
+    callback = function() require("fyler.session").save_cursors() end,
+  })
+
+  -- A session recreates its buffers with `file fyler://...`. If fyler is still
+  -- open (loading a session in place, e.g. persistence.nvim's load()), the
+  -- names are taken and `:file` fails with E95, leaving unnamed buffers. Free
+  -- them before the session file is sourced.
+  vim.api.nvim_create_autocmd("SourcePre", {
+    group = augroup,
+    desc = "Reset fyler views before sourcing a session",
+    callback = function(args)
+      if args.file == "" then return end
+      local file = vim.fn.fnamemodify(vim.fn.expand(args.file), ":p")
+      if vim.fn.filereadable(file) == 0 then return end
+      local first = vim.fn.readfile(file, "", 1)[1]
+      if first == "let SessionLoad = 1" then require("fyler.session").prepare_for_load() end
+    end,
+  })
 
   -- :e in a fyler buffer should reload, not leave it blank.
   vim.api.nvim_create_autocmd("BufReadCmd", {
@@ -90,9 +128,7 @@ function M.setup(config)
       local ok, finder_mod = pcall(require, "fyler.views.finder")
       if not ok then return end
       local inst = finder_mod.instance(slot)
-      if inst and inst.win and inst.win.bufnr == args.buf then
-        inst:dispatch_mutation()
-      end
+      if inst and inst.win and inst.win.bufnr == args.buf then inst:dispatch_mutation() end
     end,
   })
 
@@ -142,9 +178,7 @@ function M.setup(config)
             local target_width = win_config.width
             if target_width and target_width > 0 then
               local current_width = vim.api.nvim_win_get_width(winid)
-              if current_width ~= target_width then
-                pcall(vim.api.nvim_win_set_width, winid, target_width)
-              end
+              if current_width ~= target_width then pcall(vim.api.nvim_win_set_width, winid, target_width) end
             end
           end
         end
@@ -222,9 +256,7 @@ function M.setup(config)
         local wins = vim.api.nvim_tabpage_list_wins(tabpage)
         local all_fyler_winids = {}
         for inst in finder_mod.iter_instances() do
-          if inst and inst.win and inst.win.winid then
-            all_fyler_winids[inst.win.winid] = true
-          end
+          if inst and inst.win and inst.win.winid then all_fyler_winids[inst.win.winid] = true end
         end
 
         local target_win = nil

@@ -47,6 +47,9 @@ This fork ([jugarpeupv/fyler.nvim](https://github.com/jugarpeupv/fyler.nvim)) bu
   pane instead of swapping in a stale buffer.
 - **Reliable `:e` / `:w`** — `:e` reloads the view instead of blanking the
   buffer, and a write handler is always present (no `E676`).
+- **Sessions** — fyler views survive `:mksession`: loading a session reopens each
+  view in its window, with the same directory and instance slot (works with
+  persistence.nvim and auto-session).
 - **Cross-device moves** — `EXDEV` falls back to copy + delete, and paste targets the directory under the cursor.
 - **Trash without double confirmation** — a missing or failing macOS trash
   backend deletes permanently directly; already-trashed files count as success.

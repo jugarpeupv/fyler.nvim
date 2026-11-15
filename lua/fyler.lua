@@ -49,6 +49,19 @@
 ---
 ---     -- Focuses given file path or alternate buffer
 ---     fyler.navigate("...")
+---
+--- SESSIONS
+---
+--- Fyler integrates with |:mksession|: loading a session reopens every fyler
+--- view in the window where it was saved, with the same directory and
+--- instance slot. This requires the `blank` flag in 'sessionoptions' (present
+--- in Neovim's default) so that the window is stored in the session. The cursor
+--- position is restored too (re-expanding the path to the entry when needed);
+--- floating views and the rest of the expanded tree state are not persisted,
+--- since sessions cannot serialize plugin state. Do not wipe fyler buffers
+--- before saving the session (some session managers wipe special buffers in a
+--- pre-save hook): the empty placeholder written by |:mksession| is what allows
+--- the view to be restored.
 --- <
 ---
 ---@tag fyler.nvim
@@ -66,6 +79,10 @@ function M.setup(opts)
   require("fyler.config").setup(opts)
 
   did_setup = true
+
+  -- A session may have been loaded before this plugin (lazy loading): rebuild
+  -- any fyler placeholder it left behind.
+  vim.schedule(function() require("fyler.session").restore() end)
 
   local finder = setmetatable({}, { __index = function(_, k) return require("fyler.views.finder")[k] end })
 
