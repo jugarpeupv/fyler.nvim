@@ -167,6 +167,38 @@ local function wipe_stale()
   end
 end
 
+---Drop the `balt` lines that name a fyler placeholder.
+---
+---A session recreates its buffers with `enew` followed by `file fyler://...`,
+---and `:file` makes the buffer its own alternate file (`#`). The next
+---`:mksession` therefore writes `balt fyler://...` for that window. Sourcing
+---such a session fails: the placeholder is rebuilt as a modified buffer
+---(`buftype` is only set by the `setlocal` lines that come later) and `:balt`
+---on the current buffer aborts with `E37: No write since last change`,
+---dropping the rest of the session. That is what made `:restart` fail with
+---"Error in UIEnter Autocommands for '*'". A placeholder cannot hold state
+---anyway, so the line is useless: remove it.
+---@param session string
+local function drop_placeholder_balt(session)
+  local lines = vim.fn.readfile(session)
+  local kept = {}
+  local changed = false
+  for _, line in ipairs(lines) do
+    local name = line:match("^balt%s+(.*)$")
+    if name then
+      name = name:gsub("^%+%d+%s+", "")
+      if helper.is_protocol_uri(name) then
+        changed = true
+      else
+        kept[#kept + 1] = line
+      end
+    else
+      kept[#kept + 1] = line
+    end
+  end
+  if changed then pcall(vim.fn.writefile, kept, session) end
+end
+
 ---Rebuild the fyler view for a placeholder buffer in the window showing it.
 ---Safe to call for buffers that are already owned by a view: they are skipped.
 ---@param buf integer
@@ -273,6 +305,17 @@ function M.save_cursors()
   end
   lines[#lines + 1] = line
   pcall(vim.fn.writefile, lines, session)
+end
+
+---Tidy a session file just written by `:mksession`.
+---
+---Hooked to `SessionWritePost` and to persistence.nvim's `PersistenceSavePost`
+---(which runs from `VimLeavePre`, where built-in autocmds are suppressed).
+function M.on_session_save()
+  local session = vim.v.this_session
+  if not session or session == "" or vim.fn.filereadable(session) == 0 then return end
+  drop_placeholder_balt(session)
+  M.save_cursors()
 end
 
 return M

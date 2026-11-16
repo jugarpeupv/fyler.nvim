@@ -61,8 +61,8 @@ function M.setup(config)
   -- stored cursor), so append it to the session file for SessionLoadPost.
   vim.api.nvim_create_autocmd("SessionWritePost", {
     group = augroup,
-    desc = "Save fyler cursor positions in the session file",
-    callback = function() require("fyler.session").save_cursors() end,
+    desc = "Tidy the session file (drop placeholder balt lines, save cursors)",
+    callback = function() require("fyler.session").on_session_save() end,
   })
 
   -- persistence.nvim saves from VimLeavePre, where Neovim suppresses built-in
@@ -70,8 +70,8 @@ function M.setup(config)
   vim.api.nvim_create_autocmd("User", {
     group = augroup,
     pattern = "PersistenceSavePost",
-    desc = "Save fyler cursor positions after persistence.nvim saves",
-    callback = function() require("fyler.session").save_cursors() end,
+    desc = "Tidy the session file after persistence.nvim saves",
+    callback = function() require("fyler.session").on_session_save() end,
   })
 
   -- A session recreates its buffers with `file fyler://...`. If fyler is still

@@ -123,6 +123,26 @@ T["Restores when the session is loaded while fyler is open"] = function()
   equal(nvim.lua([[return require("fyler").get_current_dir()]]), dir)
 end
 
+T["Drops the placeholder `balt` lines from the session"] = function()
+  local dir = make_dirs({ "session_balt" })[1]
+  local session = session_path("session_balt")
+
+  open(dir, "replace")
+  save_session(session)
+
+  -- Loading a session recreates the view with `enew | file fyler://...`, and
+  -- `:file` makes the placeholder its own alternate file, so the next
+  -- :mksession writes `balt fyler://...`. Sourcing that line aborts with E37
+  -- and drops the rest of the session (this is what broke :restart).
+  nvim.setup_no_perm(opts)
+  load_session(session)
+  save_session(session)
+
+  local saved = table.concat(vim.fn.readfile(session), "\n")
+  helper.match_pattern(saved, "file fyler://")
+  equal(saved:find("balt fyler://", 1, true), nil)
+end
+
 T["Restores the cursor on the same entry"] = function()
   local dir = vim.fs.joinpath(_G.FYLER_TEMP_DIR, "session_cursor")
   vim.fn.delete(dir, "rf")
