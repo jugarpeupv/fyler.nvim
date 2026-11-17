@@ -23,6 +23,78 @@ local function update_global_cwd(path)
   global_cwd = vim.fn.fnamemodify(p, ":p"):gsub("/$", "")
 end
 
+---Re-apply a moved/undone entry's decorations from the last render snapshot.
+---`marks` is the row's current extmark list (used to avoid duplicates).
+---@param win Win
+---@param row integer 0-indexed buffer row
+---@param name_start integer 0-indexed column where the filename starts
+---@param cached table entry snapshot from Win:cache_decorations
+---@param marks table[] current extmarks for the row
+local function reapply_decorations(win, row, name_start, cached, marks)
+  local cell_delta = name_start - cached.name_start
+  local hl_keys, virt = {}, {}
+  for _, mark in ipairs(marks) do
+    local details = mark[4] or {}
+    if details.virt_text then
+      virt[#virt + 1] = {
+        pos = details.virt_text_pos,
+        win_col = details.virt_text_win_col,
+        text = details.virt_text,
+      }
+    elseif details.hl_group ~= nil or details.conceal ~= nil then
+      local key = string.format(
+        "%d|%s|%s|%s",
+        mark[3],
+        tostring(details.end_col),
+        tostring(details.hl_group),
+        tostring(details.conceal)
+      )
+      hl_keys[key] = true
+    end
+  end
+
+  for _, spec in ipairs(cached.highlights) do
+    local col_start = name_start + spec.rel_start
+    local col_end = name_start + spec.rel_end
+    if col_start >= 0 and col_end > col_start then
+      local key = string.format("%d|%d|%s|%s", col_start, col_end, tostring(spec.hl_group), tostring(spec.conceal))
+      if not hl_keys[key] then
+        win:set_extmark(row, col_start, {
+          end_col = col_end,
+          hl_group = spec.hl_group,
+          priority = spec.priority,
+          conceal = spec.conceal,
+        })
+        hl_keys[key] = true
+      end
+    end
+  end
+
+  for _, spec in ipairs(cached.extmarks) do
+    local win_col = spec.win_col and (spec.win_col + cell_delta) or nil
+    local found = false
+    for _, existing in ipairs(virt) do
+      if
+        existing.pos == spec.virt_text_pos
+        and existing.win_col == win_col
+        and vim.deep_equal(existing.text, spec.virt_text)
+      then
+        found = true
+        break
+      end
+    end
+    if not found then
+      win:set_extmark(row, 0, {
+        hl_mode = spec.hl_mode,
+        virt_text = spec.virt_text,
+        virt_text_pos = spec.virt_text_pos,
+        virt_text_win_col = win_col,
+      })
+      virt[#virt + 1] = { pos = spec.virt_text_pos, win_col = win_col, text = spec.virt_text }
+    end
+  end
+end
+
 ---Move text typed before an entry's technical prefix (icon + concealed
 ---ref_id) into the filename. Multi-cursor plugins insert at raw buffer
 ---columns, so a cursor at column 0 writes before the icon and never reaches
@@ -105,6 +177,15 @@ local function normalize_entry_prefixes(win)
               conceal = details.conceal,
             })
           end
+        end
+
+        -- A line moved with `:m` (or restored by undo) loses its extmarks:
+        -- the on_lines handler deletes them as if the line were removed.
+        -- Re-apply the decorations cached at the last render, shifted to the
+        -- entry's current column.
+        local cached = win:get_cached_decorations(ref_id)
+        if cached and cached.tech == prefix and cached.tail == line:sub(name_start + 1) then
+          reapply_decorations(win, i - 1, name_start, cached, marks_by_row[i - 1] or {})
         end
       end
     end

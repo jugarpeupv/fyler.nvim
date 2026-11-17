@@ -159,6 +159,64 @@ function Win:clear_extmarks()
   self._extmark_ids = {}
 end
 
+---Snapshot the decorations of a render keyed by entry ref_id. `:m` is a
+---transient delete+insert, and the on_lines handler below removes the moved
+---line's extmarks; the finder uses this snapshot to re-apply them afterwards.
+---@param lines string[]
+---@param highlights table[]
+---@param extmarks table[]
+function Win:cache_decorations(lines, highlights, extmarks)
+  local hl_by_line, extmark_by_line = {}, {}
+  for _, hl in ipairs(highlights) do
+    hl_by_line[hl.line] = hl_by_line[hl.line] or {}
+    table.insert(hl_by_line[hl.line], hl)
+  end
+  for _, extmark in ipairs(extmarks) do
+    extmark_by_line[extmark.line] = extmark_by_line[extmark.line] or {}
+    table.insert(extmark_by_line[extmark.line], extmark)
+  end
+
+  local cache = {}
+  for index, line in ipairs(lines) do
+    local row = index - 1
+    local ref_id = tonumber(line:match("/(%d%d%d%d%d+)"))
+    if ref_id then
+      local _, token_end = line:find("/%d%d%d%d%d+%s?")
+      local name_start = token_end or #line
+      local entry = {
+        tech = line:sub(1, name_start):gsub("^%s*", ""),
+        tail = line:sub(name_start + 1),
+        name_start = name_start,
+        highlights = {},
+        extmarks = {},
+      }
+      for _, hl in ipairs(hl_by_line[row] or {}) do
+        table.insert(entry.highlights, {
+          rel_start = hl.col_start - name_start,
+          rel_end = hl.col_end - name_start,
+          hl_group = hl.highlight_group,
+          priority = hl.priority,
+          conceal = hl.conceal,
+        })
+      end
+      for _, extmark in ipairs(extmark_by_line[row] or {}) do
+        table.insert(entry.extmarks, {
+          virt_text = extmark.virt_text,
+          virt_text_pos = extmark.virt_text_pos,
+          hl_mode = extmark.hl_mode,
+          win_col = extmark.virt_text_pos ~= "eol" and extmark.col or nil,
+        })
+      end
+      cache[ref_id] = entry
+    end
+  end
+  self._entry_decorations = cache
+end
+
+---@param ref_id integer
+---@return table|nil
+function Win:get_cached_decorations(ref_id) return self._entry_decorations and self._entry_decorations[ref_id] or nil end
+
 ---@param row integer
 ---@param col integer
 ---@param options vim.api.keyset.set_extmark

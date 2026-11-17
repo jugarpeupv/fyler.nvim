@@ -89,6 +89,9 @@ function Ui:render(component, ...)
   local lines = self.renderer.line
   local highlights = self.renderer.highlight
   local extmarks = self.renderer.extmark
+  -- Keep a per-entry snapshot of decorations so a later line move/undo (which
+  -- drops the moved line's extmarks) can restore them.
+  self.win:cache_decorations(lines, highlights, extmarks)
   local header = self.win.header
   local line_offset = (header ~= nil) and 1 or 0
 
